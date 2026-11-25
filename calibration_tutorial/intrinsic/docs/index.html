@@ -46,7 +46,7 @@
     <li><a class="p" href="#part-3"><span class="n">3</span>Capture and calibrate</a>
       <ol>
         <li><a href="#s10"><span class="n">3.1</span>Capture images</a></li>
-        <li><a href="#gui"><span class="n">3.2</span>Or capture in a window with buttons</a></li>
+        <li><a href="#gui"><span class="n">3.2</span>Or capture with buttons</a></li>
         <li><a href="#s11"><span class="n">3.3</span>Run the calibration</a></li>
         <li><a href="#s12"><span class="n">3.4</span>Reprojection error</a></li>
         <li><a href="#s13"><span class="n">3.5</span>Undistort an image</a></li>
@@ -79,7 +79,7 @@
   <p class="lede">Photograph a chessboard from a dozen or so angles, and OpenCV works out your webcam's focal length, optical centre and lens distortion. You can then use those numbers to straighten the camera's images.</p>
   <dl class="facts">
     <div><dt>You need</dt><dd>A laptop with a webcam (built-in or USB) and a printed chessboard (or ChArUco board)</dd></div>
-    <div><dt>Code</dt><dd><code>calibration_tutorial/intrinsic/</code>, four Python scripts (capture in the terminal or in a window, chessboard and ChArUco calibration)</dd></div>
+    <div><dt>Code</dt><dd><code>calibration_tutorial/intrinsic/</code>, four Python scripts (capture with keys in a live preview window or with buttons, chessboard and ChArUco calibration)</dd></div>
     <div><dt>You get</dt><dd>K, five distortion coefficients and an error in pixels</dd></div>
     <div><dt>Follows</dt><dd>Slides 1–13, “Camera Intrinsic Calibration”</dd></div>
   </dl>
@@ -456,8 +456,8 @@ cd calibration_tutorial/intrinsic</code></pre></div>
       <li><div>
         <p><b>Check the folder.</b> You should see:</p>
         <div class="code out"><div class="cap"><span class="file">calibration_tutorial/intrinsic/</span></div><pre><code class="language-plaintext">intrinsic/
-├── w3_calibration_cap.py         capture photos with the keyboard (option A or B)
-├── w3_calibration_gui.py         capture photos in a window with buttons (section 3.2)
+├── w3_calibration_cap.py         capture photos with keys in a live preview window (option A or B)
+├── w3_calibration_gui.py         capture photos with buttons (section 3.2)
 ├── camera_names.py               used by the window: the names of your cameras
 ├── w3_calibration.py             option A: chessboard calibration and undistortion
 ├── w3_calibration_charuco.py     option B: ChArUco calibration (and the optional fisheye model)
@@ -545,7 +545,7 @@ copy sample_calibration_images\*.jpg calibration_images\</code></pre></div>
 
 <!-- ======================================================= gui -->
 <section class="s" id="gui">
-  <div class="s-head"><span class="n">3.2</span><h3>Or capture in a window with buttons</h3></div>
+  <div class="s-head"><span class="n">3.2</span><h3>Or capture with buttons</h3></div>
   <div class="s-body">
     <p>An alternative to <code>w3_calibration_cap.py</code>: the same photos in the same folder, from a window that also shows where the board has been and a live estimate of the calibration result.</p>
     <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python w3_calibration_gui.py</code></pre></div>
