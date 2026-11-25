@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera Intrinsic Calibration · COMP0241 Lab</title>
+<meta name="description" content="Step-by-step tutorial: calibrate your webcam with OpenCV, read the camera matrix and distortion coefficients, check the reprojection error and undistort an image.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23fff'/%3E%3Cpath d='M0 0h4v4H0zM8 0h4v4H8zM4 4h4v4H4zM12 4h4v4h-4zM0 8h4v4H0zM8 8h4v4H8zM4 12h4v4H4zM12 12h4v4h-4z'/%3E%3Ccircle cx='8' cy='8' r='1.6' fill='%23e30613'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<link rel="stylesheet" href="site.css?v=8">
+</head>
+<body>
+
+<header class="bar">
+  <span class="tag">COMP0241 / Intrinsic</span>
+  <span class="title">Camera intrinsic calibration with OpenCV</span>
+  <nav class="nav"><a href="../">All labs</a><a href="#s09">Start the lab</a></nav>
+  <span class="progress" id="progress"></span>
+</header>
+
+<div class="page">
+
+<nav class="toc" aria-label="Contents">
+  <div class="cap">Contents</div>
+  <ol class="toc-parts">
+    <li><a class="p" href="#part-1"><span class="n">1</span>Theory</a>
+      <ol>
+        <li><a href="#s01"><span class="n">1.1</span>Why calibrate?</a></li>
+        <li><a href="#s02"><span class="n">1.2</span>Pinholes and real lenses</a></li>
+        <li><a href="#s03"><span class="n">1.3</span>Radial and tangential distortion</a></li>
+        <li><a href="#s04"><span class="n">1.4</span>The distortion model</a></li>
+        <li><a href="#s05"><span class="n">1.5</span>The camera model</a></li>
+      </ol>
+    </li>
+    <li><a class="p" href="#part-2"><span class="n">2</span>Prepare</a>
+      <ol>
+        <li><a href="#s06"><span class="n">2.1</span>The task</a></li>
+        <li><a href="#s07"><span class="n">2.2</span>The calibration target</a></li>
+        <li><a href="#s08"><span class="n">2.3</span>Capturing good views</a></li>
+        <li><a href="#s09"><span class="n">2.4</span>Set up</a></li>
+      </ol>
+    </li>
+    <li><a class="p" href="#part-3"><span class="n">3</span>Capture and calibrate</a>
+      <ol>
+        <li><a href="#s10"><span class="n">3.1</span>Capture images</a></li>
+        <li><a href="#gui"><span class="n">3.2</span>Or capture in a window with buttons</a></li>
+        <li><a href="#s11"><span class="n">3.3</span>Run the calibration</a></li>
+        <li><a href="#s12"><span class="n">3.4</span>Reprojection error</a></li>
+        <li><a href="#s13"><span class="n">3.5</span>Undistort an image</a></li>
+      </ol>
+    </li>
+    <li><a class="p" href="#part-4"><span class="n">4</span>Check your result</a>
+      <ol>
+        <li><a href="#s14"><span class="n">4.1</span>Read your result</a></li>
+        <li><a href="#s15"><span class="n">4.2</span>Troubleshooting</a></li>
+        <li><a href="#s16"><span class="n">4.3</span>Check yourself</a></li>
+      </ol>
+    </li>
+    <li><a class="p" href="#part-5"><span class="n">5</span>Going further</a>
+      <ol>
+        <li><a href="#s17"><span class="n">5.1</span>Optional experiments</a></li>
+        <li><a href="#fisheye"><span class="n">5.2</span>Optional: a fisheye lens</a></li>
+        <li><a href="#reading"><span class="n">5.3</span>Further reading and tools</a></li>
+        <li><a href="#credits"><span class="n">5.4</span>Sources and credits</a></li>
+      </ol>
+    </li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- ======================================================= HERO -->
+<div class="hero">
+  <div class="kicker">COMP0241 · Lab tutorial</div>
+  <h1>Camera intrinsic <em>calibration</em></h1>
+  <p class="lede">Photograph a chessboard from a dozen or so angles, and OpenCV works out your webcam's focal length, optical centre and lens distortion. You can then use those numbers to straighten the camera's images.</p>
+  <dl class="facts">
+    <div><dt>You need</dt><dd>A laptop with a webcam (built-in or USB) and a printed chessboard (or ChArUco board)</dd></div>
+    <div><dt>Code</dt><dd><code>calibration_tutorial/intrinsic/</code>, four Python scripts (capture in the terminal or in a window, chessboard and ChArUco calibration)</dd></div>
+    <div><dt>You get</dt><dd>K, five distortion coefficients and an error in pixels</dd></div>
+    <div><dt>Follows</dt><dd>Slides 1–13, “Camera Intrinsic Calibration”</dd></div>
+  </dl>
+</div>
+
+<!-- ####################################################### part-1 -->
+<section class="part-s" id="part-1">
+  <div class="p-head"><span class="n">1</span><h2>Theory</h2></div>
+
+<!-- ======================================================= 01 -->
+<section class="s" id="s01">
+  <div class="s-head"><span class="n">1.1</span><h3>Why calibrate?</h3><span class="slide">Slide 2</span></div>
+  <div class="s-body">
+    <p><b>Goal.</b> Estimate the <em>intrinsic parameters</em> of your camera: the numbers that describe the camera itself, independent of where it is pointing.</p>
+    <p><b>Why it matters.</b> With them, you can map accurately between a 3D point in the world and the pixel where it appears. That mapping is essential for measuring objects in images, reconstructing 3D scenes, augmented reality and robot vision.</p>
+    <p><b>Application in this lab.</b> Correct lens distortion so that straight lines in the world appear straight in the image.</p>
+    <div class="trio">
+      <figure><div class="frame"><img src="img/synthetic_ideal.jpg" alt="A chessboard imaged by an ideal pinhole camera: all lines straight" width="640" height="480" loading="lazy"></div><figcaption><span>Ideal pinhole</span><span class="r">lines straight</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/synthetic_barrel.jpg" alt="The same chessboard with barrel distortion: lines bow outwards" width="640" height="480" loading="lazy"></div><figcaption><span>Barrel, k₁ &lt; 0</span><span class="r">wide-angle look</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/synthetic_pincushion.jpg" alt="The same chessboard with pincushion distortion: lines bow inwards" width="640" height="480" loading="lazy"></div><figcaption><span>Pincushion, k₁ &gt; 0</span><span class="r">telephoto look</span></figcaption></figure>
+    </div>
+    <p class="muted" style="margin-top:10px;font-size:15px">Synthetic images: the same flat chessboard rendered through the distortion model of <a class="sref" href="#s04">section 1.4</a>. Calibration estimates the coefficients, and undistortion runs the model in reverse.</p>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">tutorial: Camera Calibration › Goal</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>cv2.calibrateCamera</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga69f2545a8b62a6b0fc2ee060dc30559d" target="_blank" rel="noopener"><code>cv2.undistort</code></a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 02 -->
+<section class="s" id="s02">
+  <div class="s-head"><span class="n">1.2</span><h3>Pinholes and real lenses</h3><span class="slide">Slide 3</span></div>
+  <div class="s-body">
+    <p><b>Pinhole model.</b> Light from a 3D object passes through a tiny hole and forms an upside-down 2D image on the back wall of the camera (the <em>image plane</em>, at distance \(f\), the <em>focal length</em>, behind the hole). Each point in the world sends exactly one ray through the hole, so <em>straight lines stay straight</em>. Your eye works on roughly the same principle, with the pupil as the hole.</p>
+    <p><b>Real cameras use lenses.</b> A pinhole lets through very little light, so real cameras use a lens to collect and focus many rays from each point. The lens is curved, though, and its magnification changes slightly with distance from the centre: rays towards the edge of the field are bent slightly too much (or too little). That is <b>distortion</b>, and it is strongest at the edges of the image.</p>
+    <figure class="fig" style="max-width:60rem">
+      <div class="frame">
+      <svg class="diagram" viewBox="0 0 960 330" role="img" aria-label="Left: pinhole camera, one straight ray from a point through the pinhole to the image plane. Right: lens, chief rays land closer to the centre than the ideal pinhole position, more so at the edge.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#000"/></marker>
+          <marker id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#e30613"/></marker>
+        </defs>
+        <!-- panel A: pinhole -->
+        <text class="cap" x="24" y="30">A · Pinhole</text>
+        <line x1="70" y1="250" x2="70" y2="88" stroke="#000" stroke-width="3" marker-end="url(#ah)"/>
+        <circle cx="70" cy="80" r="5" fill="#000"/>
+        <text class="lbl" x="84" y="72">3D point P</text>
+        <line x1="250" y1="44" x2="250" y2="152" stroke="#000" stroke-width="2"/>
+        <line x1="250" y1="168" x2="250" y2="292" stroke="#000" stroke-width="2"/>
+        <line x1="257" y1="198" x2="251.5" y2="166" stroke="#000" stroke-width="1"/><text class="mono" x="258" y="212">pinhole</text>
+        <line x1="70" y1="250" x2="380" y2="98.4" stroke="#b8b8b8" stroke-width="1.2"/>
+        <line x1="70" y1="80" x2="380" y2="214.7" stroke="#e30613" stroke-width="2"/>
+        <line x1="380" y1="54" x2="380" y2="262" stroke="#000" stroke-width="3"/>
+        <text class="mono" x="356" y="46">image plane</text>
+        <line x1="380" y1="98.4" x2="380" y2="207" stroke="#000" stroke-width="3" marker-end="url(#ah)"/>
+        <circle cx="380" cy="214.7" r="5" fill="#e30613"/>
+        <text class="lbl" x="392" y="232" fill="#e30613" style="fill:#e30613">p = (u, v)</text>
+        <line x1="250" y1="306" x2="380" y2="306" stroke="#000" stroke-width="1" marker-start="url(#ah)" marker-end="url(#ah)"/>
+        <text class="mono" x="309" y="300">f</text>
+        <text class="mono" x="24" y="322" fill="#6b6b6b" style="fill:#6b6b6b">one ray per point · lines stay straight</text>
+        <!-- divider -->
+        <line x1="480" y1="20" x2="480" y2="320" stroke="#d6d6d6" stroke-width="1"/>
+        <!-- panel B: lens -->
+        <text class="cap" x="504" y="30">B · Lens</text>
+        <g stroke="#000" stroke-width="1.5" fill="#000">
+          <circle cx="530" cy="70" r="4"/><circle cx="530" cy="115" r="4"/><circle cx="530" cy="160" r="4"/><circle cx="530" cy="205" r="4"/><circle cx="530" cy="250" r="4"/>
+        </g>
+        <text class="mono" x="504" y="290">object points</text>
+        <ellipse cx="690" cy="160" rx="13" ry="112" fill="none" stroke="#000" stroke-width="2"/>
+        <text class="mono" x="664" y="40">lens</text>
+        <!-- rays to lens centre -->
+        <g stroke="#b8b8b8" stroke-width="1.2">
+          <line x1="530" y1="70" x2="690" y2="160"/><line x1="530" y1="115" x2="690" y2="160"/><line x1="530" y1="160" x2="830" y2="160"/><line x1="530" y1="205" x2="690" y2="160"/><line x1="530" y1="250" x2="690" y2="160"/>
+        </g>
+        <!-- ideal continuation (dashed grey) -->
+        <g stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="4 4">
+          <line x1="690" y1="160" x2="830" y2="234.1"/><line x1="690" y1="160" x2="830" y2="197.1"/><line x1="690" y1="160" x2="830" y2="122.9"/><line x1="690" y1="160" x2="830" y2="85.9"/>
+        </g>
+        <!-- actual (red) -->
+        <g stroke="#e30613" stroke-width="2">
+          <line x1="690" y1="160" x2="830" y2="220.8"/><line x1="690" y1="160" x2="830" y2="195.4"/><line x1="690" y1="160" x2="830" y2="124.6"/><line x1="690" y1="160" x2="830" y2="99.2"/>
+        </g>
+        <line x1="830" y1="54" x2="830" y2="266" stroke="#000" stroke-width="3"/>
+        <text class="mono" x="806" y="46">sensor</text>
+        <g fill="#fff" stroke="#6b6b6b" stroke-width="1.5"><circle cx="830" cy="234.1" r="5"/><circle cx="830" cy="197.1" r="5"/><circle cx="830" cy="122.9" r="5"/><circle cx="830" cy="85.9" r="5"/></g>
+        <g fill="#e30613"><circle cx="830" cy="220.8" r="4.5"/><circle cx="830" cy="195.4" r="4.5"/><circle cx="830" cy="160" r="4.5"/><circle cx="830" cy="124.6" r="4.5"/><circle cx="830" cy="99.2" r="4.5"/></g>
+        <circle cx="850" cy="72" r="5" fill="#fff" stroke="#6b6b6b" stroke-width="1.5"/><text class="mono" x="862" y="76">ideal</text>
+        <circle cx="850" cy="94" r="4.5" fill="#e30613"/><text class="mono" x="862" y="98" fill="#e30613" style="fill:#e30613">actual</text>
+        <text class="mono" x="844" y="250">edge: big error</text>
+        <text class="mono" x="844" y="165">centre: none</text>
+        <text class="mono" x="504" y="322" fill="#6b6b6b" style="fill:#6b6b6b">magnification falls off towards the edge · barrel distortion</text>
+      </svg>
+      </div>
+      <figcaption><span>Why distortion grows towards the edges</span><span class="r">Schematic, not to scale</span></figcaption>
+    </figure>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#details" target="_blank" rel="noopener">calib3d reference › pinhole camera model</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">tutorial: Camera Calibration › Basics</a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 03 -->
+<section class="s" id="s03">
+  <div class="s-head"><span class="n">1.3</span><h3>Radial and tangential distortion</h3><span class="slide">Slide 4</span></div>
+  <div class="s-body">
+    <p><b>Radial distortion</b> is the most common kind: straight lines in the world come out <em>curved</em>, and the effect grows with distance from the image centre. Using the radial distortion coefficients \(k_1, k_2, k_3\) (defined in <a class="sref" href="#s04">section 1.4</a>), lines bow outwards in <b>barrel</b> distortion (k₁ &lt; 0, typical of wide-angle lenses) and inwards in <b>pincushion</b> distortion (k₁ &gt; 0). When k₂ and k₃ are also non-zero, as in the webcam results of <a class="sref" href="#s14">section 4.1</a>, the sign of k₁ alone does not tell you which type you have.</p>
+    <p><b>Tangential distortion</b> appears mainly when the lens is not exactly parallel to the image sensor. The picture looks slightly tilted or stretched to one side, so parts of the scene seem a little nearer or further than they really are.</p>
+    <p>Try it below. The grey grid is what an ideal pinhole camera would record; the black grid is the same grid seen through a lens with the coefficients you set. Drag the red probe to see the formula from the next section evaluated at that pixel.</p>
+
+    <div class="widget" id="dist-widget">
+      <div class="w-top"><span>Distortion explorer</span><span class="hint">Drag the probe · 640 × 480 image, f = 550 px, principal point at the centre (+)</span></div>
+      <div class="w-body">
+        <div class="w-stage"><canvas id="dist-canvas" width="640" height="480" role="application" aria-roledescription="interactive diagram" aria-label="Grid distorted by the chosen coefficients. Drag, or focus and use the arrow keys, to move the probe."></canvas><dl class="stats two" id="dist-stats"></dl></div>
+        <div class="w-side">
+          <div class="seg" id="dist-presets" role="group" aria-label="Presets">
+            <button data-p="none" aria-pressed="false">None</button>
+            <button data-p="barrel" aria-pressed="true">Barrel</button>
+            <button data-p="pin" aria-pressed="false">Pincushion</button>
+            <button data-p="tan" aria-pressed="false">Tangential</button>
+            <button data-p="sample" aria-pressed="false">Lab webcam</button>
+          </div>
+          <div class="sl"><label for="k1">k₁ radial</label><span class="val" id="k1v"></span><input type="range" id="k1" min="-0.6" max="0.6" step="0.005"></div>
+          <div class="sl"><label for="k2">k₂ radial</label><span class="val" id="k2v"></span><input type="range" id="k2" min="-0.6" max="0.6" step="0.005"></div>
+          <div class="sl"><label for="k3">k₃ radial</label><span class="val" id="k3v"></span><input type="range" id="k3" min="-1" max="1" step="0.01"></div>
+          <div class="sl"><label for="p1">p₁ tangential</label><span class="val" id="p1v"></span><input type="range" id="p1" min="-0.05" max="0.05" step="0.001"></div>
+          <div class="sl"><label for="p2">p₂ tangential</label><span class="val" id="p2v"></span><input type="range" id="p2" min="-0.05" max="0.05" step="0.001"></div>
+          <div class="legend"><span><i class="grey"></i>ideal</span><span><i></i>distorted</span><span><i class="dot"></i>probe</span></div>
+        </div>
+      </div>
+      <div class="w-foot muted">“Lab webcam” uses the coefficients the lab script estimates from the six sample images in the repo (<a class="sref" href="#s14">section 4.1</a>). Where the board was actually photographed, they move points by at most about 2 px. Towards the corners of the frame, which no photo covered (<a class="sref" href="#s08">section 2.3</a>), the model is extrapolated and the shift reaches about 7–8 px. That is mild, which is typical of a laptop webcam. Fisheye lenses need a different model (<code>cv2.fisheye</code>).</div>
+    </div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">based on: Camera Calibration › Basics</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#details" target="_blank" rel="noopener">calib3d reference › barrel and pincushion</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#details" target="_blank" rel="noopener">fisheye reference</a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 04 -->
+<section class="s" id="s04">
+  <div class="s-head"><span class="n">1.4</span><h3>The distortion model</h3><span class="slide">Slide 5</span></div>
+  <div class="s-body">
+    <p>OpenCV describes the lens with five numbers, the <b>distortion coefficients</b>, always stored in this order:</p>
+    <div class="math">$$\texttt{distCoeffs} = (k_1,\; k_2,\; p_1,\; p_2,\; k_3)$$</div>
+    <p>The <b>radial</b> coefficients \(k_1, k_2, k_3\) model barrel and pincushion distortion (curved lines). The <b>tangential</b> coefficients \(p_1, p_2\) model the tilts and shifts caused by a lens that is slightly misaligned.</p>
+    <p>Both act on the <b>normalised image coordinates</b> \((x, y)\) of a point — its unitless position on a plane one unit in front of the camera (\(x = X_c / Z_c,\; y = Y_c / Z_c\), <a class="sref" href="#s05">section 1.5</a>), before converting to pixels. OpenCV applies them together:</p>
+    <div class="math">
+      <div class="cap">Radial + tangential, as computed by OpenCV</div>
+      $$x_d = x\,(1 + k_1 r^2 + k_2 r^4 + k_3 r^6) + 2p_1 xy + p_2\,(r^2 + 2x^2)$$
+      $$y_d = y\,(1 + k_1 r^2 + k_2 r^4 + k_3 r^6) + p_1\,(r^2 + 2y^2) + 2p_2 xy$$
+      $$\text{where}\quad r^2 = x^2 + y^2$$
+    </div>
+    <p>Because of the \(r^2, r^4, r^6\) terms, the correction is tiny near the centre (\(r \approx 0\)) and largest in the image corners. That is why your calibration images need the board <em>near the edges and corners</em> of the frame (<a class="sref" href="#s08">section 2.3</a>).</p>
+    <div class="call">
+      <span class="lab">Note</span>
+      <p>Undistortion runs this mapping in reverse: for every pixel in the corrected image, OpenCV asks where it came from in the distorted photo. You never have to invert the polynomial yourself.</p>
+    </div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#details" target="_blank" rel="noopener">calib3d reference › distortion model</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d4/d94/tutorial_camera_calibration.html" target="_blank" rel="noopener">tutorial: Camera calibration With OpenCV › Theory</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga7dfb72c9cf9780a347fbe3d1c47e5d5a" target="_blank" rel="noopener"><code>cv2.initUndistortRectifyMap</code></a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 05 -->
+<section class="s" id="s05">
+  <div class="s-head"><span class="n">1.5</span><h3>The camera model</h3><span class="slide">Slide 6</span></div>
+  <div class="s-body">
+    <p>A <b>camera model</b> is the mathematical recipe for where a 3D world point \(P = (X, Y, Z)\) lands in the image, at pixel \(p = (u, v)\). In homogeneous coordinates:</p>
+    <div class="math">$$s \begin{bmatrix} u \\ v \\ 1 \end{bmatrix} = K\,[\,R \mid t\,] \begin{bmatrix} X \\ Y \\ Z \\ 1 \end{bmatrix}, \qquad K = \begin{bmatrix} f_x & 0 & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1 \end{bmatrix}$$</div>
+    <p>The scale factor \(s\) is the point's depth in front of the camera; dividing by it is what makes distant objects look smaller. Up to that scale, \(p = K[R \mid t]\,P\).</p>
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Group</th><th>Symbol</th><th>Meaning</th><th>Changes when…</th></tr></thead>
+      <tbody>
+        <tr><td><b>Extrinsic</b></td><td>\(R\)</td><td>Rotation from world (board) coordinates to camera coordinates: how the board is turned, as seen from the camera</td><td>you move the camera or the board</td></tr>
+        <tr><td></td><td>\(t\)</td><td>Translation: the world origin (the board's first corner) in camera coordinates</td><td>you move the camera or the board</td></tr>
+        <tr><td><b>Intrinsic</b></td><td>\(f_x, f_y\)</td><td>Focal length in pixel units (horizontal and vertical: physical focal length divided by pixel width or height; nearly equal on sensors with square pixels)</td><td>you zoom, refocus or change resolution</td></tr>
+        <tr><td></td><td>\(c_x, c_y\)</td><td>Optical centre (principal point), in pixels — where the lens's optical axis hits the image sensor (usually near the image centre)</td><td>you change resolution or crop</td></tr>
+        <tr><td></td><td>\(k_1 \dots p_2\)</td><td>Distortion coefficients (<a class="sref" href="#s04">section 1.4</a>)</td><td>you change the lens or the focus</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="call"><span class="lab">Note</span><p>\(t\) is not the camera's position in the world. It is the other way round: \(t\) is the world origin seen from the camera. The camera's own position in world coordinates is \(-R^\top t\).</p></div>
+    <p>The full chain that OpenCV's <code>cv2.projectPoints</code> follows, and that calibration fits, is:</p>
+    <ol class="steps">
+      <li><div><b>World → camera.</b> \(\;[X_c, Y_c, Z_c]^\top = R\,[X, Y, Z]^\top + t\)</div></li>
+      <li><div><b>Normalise.</b> \(\;x = X_c / Z_c,\; y = Y_c / Z_c\) (here \(s = Z_c\))</div></li>
+      <li><div><b>Distort.</b> \(\;(x, y) \to (x_d, y_d)\) with the model of <a class="sref" href="#s04">section 1.4</a></div></li>
+      <li><div><b>To pixels.</b> \(\;u = f_x\,x_d + c_x,\; v = f_y\,y_d + c_y\)</div></li>
+    </ol>
+    <p>Calibration estimates the <em>intrinsics</em> (K and the distortion coefficients), which belong to the camera. As a by-product, it also returns the <em>extrinsics</em> of every calibration photo, i.e. where the board was each time.</p>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#details" target="_blank" rel="noopener">calib3d reference › projection with A and [R|t]</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c" target="_blank" rel="noopener"><code>cv2.projectPoints</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>cv2.calibrateCamera</code></a></p>
+  </div>
+</section>
+
+</section>
+
+<!-- ####################################################### part-2 -->
+<section class="part-s" id="part-2">
+  <div class="p-head"><span class="n">2</span><h2>Prepare</h2></div>
+
+<!-- ======================================================= 06 -->
+<section class="s" id="s06">
+  <div class="s-head"><span class="n">2.1</span><h3>The task</h3><span class="slide">Slide 7</span></div>
+  <div class="s-body">
+    <p style="font-size:21px;line-height:1.4;max-width:40rem"><b>Use OpenCV to calibrate your camera and undistort an image.</b></p>
+    <p>By the end of the lab you should have:</p>
+    <ul>
+      <li>a folder of 10–20 chessboard photos taken with <em>your</em> webcam;</li>
+      <li>your camera matrix \(K\) and distortion coefficients, saved in <code>calibration_data.npz</code>;</li>
+      <li>the root-mean-square (RMS) reprojection error, in pixels, as a measure of how good the calibration is;</li>
+      <li>an undistorted image to compare with the original.</li>
+    </ul>
+    <p>The lab uses two core scripts from the course repository: <code>w3_calibration_cap.py</code> captures the photos (or use the GUI version, <code>w3_calibration_gui.py</code>, in <a class="sref" href="#gui">section 3.2</a>) and <code>w3_calibration.py</code> calibrates. A separate script, <code>w3_calibration_charuco.py</code>, does the same with a ChArUco board: that is option B in <a class="sref" href="#opt-b">section 2.2</a>.</p>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/python/calibrate.py" target="_blank" rel="noopener">sample: calibrate.py</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d4/d94/tutorial_camera_calibration.html" target="_blank" rel="noopener">tutorial: Camera calibration With OpenCV › Goal</a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 07 -->
+<section class="s" id="s07">
+  <div class="s-head"><span class="n">2.2</span><h3>The calibration target</h3><span class="slide">Slide 8</span></div>
+  <div class="s-body">
+    <p><b>Purpose of data collection.</b> To calibrate, we need many pairs of a known 3D point and the 2D pixel where it appears. A <b>chessboard</b> (option A, as on the slides) provides both: it is flat (so every corner has \(Z = 0\)), its squares have a known size, and OpenCV can find its corners automatically and precisely.</p>
+    <p>OpenCV looks for the <b>inner corners</b>, the points where four squares meet, not the squares themselves. Count them carefully, because the script must be told the exact number:</p>
+    <figure class="fig" style="max-width:40rem">
+      <div class="frame">
+      <svg class="diagram" id="board-svg" viewBox="0 0 560 330" role="img" aria-label="A board of 8 by 5 squares has 7 by 4 inner corners, marked in red"></svg>
+      </div>
+      <figcaption><span>8 × 5 squares → 7 × 4 inner corners</span><span class="r">chessboard_size = (4, 7)</span></figcaption>
+    </figure>
+    <p>The lab uses a <b>5 × 8-square</b> board with <b>34 mm</b> squares — the same one shown in the sample photos. It has 4 × 7 inner corners (the order of the two numbers in <code>chessboard_size</code> does not matter for detection). The scripts are already set up for it:</p>
+    <div class="code"><div class="cap"><span class="file">w3_calibration.py · lines 10–11</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="10">chessboard_size = (4, 7)  # INNER corners = (squares - 1) per direction; the calib.io 5x8-square board is (4, 7)
+square_size = 34.0  # Edge of one printed square in mm. It only scales tvecs: K, distortion and errors do not depend on it</code></pre></div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga93efa9b0aa890de240ca32b11253dd4a" target="_blank" rel="noopener"><code>cv2.findChessboardCorners</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">tutorial: Camera Calibration › Code</a></p>
+    <div class="pair" style="max-width:60rem;align-items:start;margin:18px 0 22px">
+      <figure style="margin:0"><div class="frame"><img src="img/chessboard_board_preview.png" alt="A4 sheet with a chessboard of 5 by 8 squares and a 100 mm check line at the top" width="749" height="530" loading="lazy"></div><figcaption><span>5 × 8 squares · 34 mm · 4 × 7 inner corners</span><span class="r"><a href="chessboard_5x8_34mm_A4.pdf" download>Download A4 PDF</a></span></figcaption></figure>
+      <div>
+        <p style="margin-top:0"><b>Need a board?</b> Print <a href="chessboard_5x8_34mm_A4.pdf" download>chessboard_5x8_34mm_A4.pdf</a> on A4 at <b>100%</b> (“Actual size”, not “Fit to page”), then measure the line at the top: it must be exactly 100 mm. If it isn't, measure five squares, divide by five and enter that value for <code>square_size</code>.</p>
+        <p>Fix the sheet flat on something stiff (a clipboard, foam board or thick cardboard), with glue or tape along all four edges, and use matte paper: a bent sheet or a reflection spoils the calibration (<a class="sref" href="#bad">section 2.3</a>).</p>
+      </div>
+    </div>
+    <div class="call">
+      <span class="lab">Using a different board?</span>
+      <ul>
+        <li>Set <code>chessboard_size</code> to (squares across − 1, squares down − 1), in both <code>w3_calibration.py</code> and <code>w3_calibration_cap.py</code>. The order of the two numbers does not matter for detection.</li>
+        <li>Print at 100% scale (not “Fit to page”), measure one square with a ruler, and set <code>square_size</code> to that value.</li>
+        <li><code>square_size</code> only sets the <em>units</em> of the board positions (<code>tvecs</code>). K, the distortion coefficients and the error come out the same whatever you type there.</li>
+      </ul>
+    </div>
+    <h4 id="opt-b">Option B: a ChArUco board</h4>
+    <p>A <b>ChArUco</b> (<em>Ch</em>essboard + <em>ArUco</em>) board is a chessboard with an ArUco marker (a small square barcode) in every white square. The markers give every inner corner a unique <b>ID</b>, so OpenCV knows which corner it is looking at even when it sees only part of the board. The maths is unchanged: the same 3D–2D corner pairs go into the same <code>cv2.calibrateCamera</code> call.</p>
+    <div class="pair" style="max-width:60rem;align-items:start">
+      <figure style="margin:0"><div class="frame"><img src="img/charuco_board_preview.png" alt="ChArUco board with 7 by 5 squares and an ArUco marker in each white square, with a 100 mm scale bar" width="742" height="525" loading="lazy"></div><figcaption><span>7 × 5 squares · 30 mm · markers 15 mm · DICT_6X6_250</span><span class="r"><a href="charuco_board_A4.pdf" download>Download A4 PDF</a></span></figcaption></figure>
+      <div>
+        <p style="margin-top:0">Print <a href="charuco_board_A4.pdf" download>charuco_board_A4.pdf</a> at <b>100%</b> (“Actual size”) and check that the bar under the board measures exactly 100 mm. It has the same layout and markers as the board in <code>sample_charuco_images/</code>. Its 6 × 4 = 24 inner corners are numbered 0–23.</p>
+        <p>The settings sit at the top of <code>w3_calibration_charuco.py</code>. Change them only if you print a different board:</p>
+        <div class="code" style="margin:0"><div class="cap"><span class="file">w3_calibration_charuco.py · lines 36–40</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="36">SQUARES_X = 7            # squares across
+SQUARES_Y = 5            # squares down
+SQUARE_LENGTH = 30.0     # side of a chessboard square, in mm (measure your print)
+MARKER_LENGTH = 15.0     # side of an ArUco marker, in mm
+DICTIONARY = cv2.aruco.DICT_6X6_250</code></pre></div>
+        <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d0/d3c/classcv_1_1aruco_1_1CharucoBoard.html#a6cbc67e2253bb47d1a0f942f9db9efde" target="_blank" rel="noopener"><code>cv2.aruco.CharucoBoard</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/df/d4a/tutorial_charuco_detection.html" target="_blank" rel="noopener">tutorial: Detection of ChArUco Boards › ChArUco Board Creation</a></p>
+      </div>
+    </div>
+    <div class="tbl-wrap">
+    <table class="tbl" style="max-width:60rem">
+      <thead><tr><th></th><th>A · Chessboard</th><th>B · ChArUco</th></tr></thead>
+      <tbody>
+        <tr><td>Follows the slides</td><td>Yes, exactly</td><td>Same maths, different detector</td></tr>
+        <tr><td>Printable board</td><td><a href="chessboard_5x8_34mm_A4.pdf" download>chessboard_5x8_34mm_A4.pdf</a></td><td><a href="charuco_board_A4.pdf" download>charuco_board_A4.pdf</a></td></tr>
+        <tr><td>Capture</td><td><code>python w3_calibration_cap.py</code></td><td><code>python w3_calibration_cap.py charuco</code></td></tr>
+        <tr><td>Calibrate</td><td><code>w3_calibration.py</code></td><td><code>w3_calibration_charuco.py</code></td></tr>
+        <tr><td>Board must be fully visible</td><td>Yes, every corner</td><td>No: any 6 or more corners, not all in one row</td></tr>
+        <tr><td>Reaching the image corners</td><td>Hard, because the whole board must stay in view</td><td>Easy: let the board run off the edge of the frame</td></tr>
+        <tr><td>Blurry photos</td><td>Tolerant</td><td>Markers must be sharp enough to decode</td></tr>
+        <tr><td>Stereo calibration later</td><td>Both cameras must see the whole board at the same time</td><td>Uses whichever corners both cameras see</td></tr>
+        <tr><td>OpenCV</td><td>Any OpenCV 4 or 5</td><td>4.7 or newer, including 5</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p><b>Which one?</b> Option A follows the slides and is enough for this lab. Choose option B if you want photos that reach the corners of the image more easily, or if you will reuse the setup for <b>stereo calibration</b> later (<a class="sref" href="#stereo">section 5.1</a>). Everything else on this page (the checklist, capturing, reprojection error and undistortion) applies to both.</p>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/da/d0d/tutorial_camera_calibration_pattern.html" target="_blank" rel="noopener">tutorial: Create Calibration Pattern › Pattern Types</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/df/d4a/tutorial_charuco_detection.html" target="_blank" rel="noopener">tutorial: Detection of ChArUco Boards › ChArUco Board Detection</a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 08 -->
+<section class="s" id="s08">
+  <div class="s-head"><span class="n">2.3</span><h3>Capturing good views</h3><span class="slide">Slide 9</span></div>
+  <div class="s-body">
+    <p>A calibration is only as good as its photos, so take your time over this step. Tick the boxes as you go (they are saved in this browser only).</p>
+    <div class="check-meta"><span id="check-count">0 / 11 done</span><button type="button" id="check-reset">Reset</button></div>
+    <ul class="check" id="checklist">
+      <li><label><input type="checkbox" data-k="flat"><span><b>Mount the board on something flat and rigid</b> (cardboard, a clipboard, a book). A curled sheet of paper ruins the result.</span></label></li>
+      <li><label><input type="checkbox" data-k="fix"><span><b>Keep either the camera or the board still</b> and move the other. For a laptop webcam it is easiest to keep the laptop still and move the board.</span></label></li>
+      <li><label><input type="checkbox" data-k="lock"><span><b>Lock the camera settings</b>: focus, zoom and aperture (slide 9). No zooming, and the same resolution throughout. If the camera autofocuses, turn autofocus off if you can (most built-in webcams have fixed focus and a fixed aperture anyway).</span></label></li>
+      <li><label><input type="checkbox" data-k="frame"><span><b>Turn off auto-framing and video effects</b>: Center Stage and Portrait under Video Effects in the macOS Control Center, or Windows Studio Effects. They crop and move the picture, which changes K from one frame to the next.</span></label></li>
+      <li><label><input type="checkbox" data-k="n"><span><b>Take the 17 photos in the shot list below</b> (slide 9 asks for 10–20). The six sample images in the repo are fewer than that, which is one reason their result is only fair.</span></label></li>
+      <li><label><input type="checkbox" data-k="near"><span><b>Vary the distance:</b> some photos with the board close (filling most of the frame) and some further away.</span></label></li>
+      <li><label><input type="checkbox" data-k="tilt"><span><b>Vary the angle:</b> tilt the board left/right and up/down by roughly 20–45°, and rotate it in-plane (twist it like a steering wheel) too.</span></label></li>
+      <li><label><input type="checkbox" data-k="edges"><span><b>Cover the whole frame, including all four image corners.</b> That is where distortion is largest (<a class="sref" href="#s04">section 1.4</a>).</span></label></li>
+      <li><label><input type="checkbox" data-k="whole"><span><b>Keep the entire board visible</b> in every photo. No fingers over it and no squares cut off by the frame edge.</span></label></li>
+      <li><label><input type="checkbox" data-k="sharp"><span><b>Avoid blur and glare:</b> hold still when you press <kbd>c</kbd>, use even light, and tilt away from reflections.</span></label></li>
+      <li><label><input type="checkbox" data-k="check"><span><b>Check every shot</b> as you take it. The capture script only saves a frame when it finds the board, but it can't tell whether the photo is sharp.</span></label></li>
+    </ul>
+    <p class="muted" style="font-size:15px;max-width:var(--measure)">With a ChArUco board (option B, captured with <code>python w3_calibration_cap.py charuco</code>), relax “keep the entire board visible”: let it run off the edge of the frame so its corners reach the image corners. Keep it sharp, though, because the markers have to be read.</p>
+    <h4 id="shots">The 17-photo shot list</h4>
+    <p>Photos that look almost the same add nothing: the calibration needs corners in every part of the image, and the board at different angles. Take these 17, keeping the camera still and moving the board:</p>
+    <div class="tbl-wrap">
+    <table class="tbl" style="max-width:60rem">
+      <thead><tr><th class="num">Photos</th><th>Where the board is and how you hold it</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td class="num">3</td><td>In the centre, facing the camera straight on: one near, one at middle distance, one far</td><td>A start, at three sizes</td></tr>
+        <tr><td class="num">4</td><td>In each corner of the image, facing the camera. Move the board until its outer squares almost touch the corner of the frame; if it is too big to reach, hold it further away</td><td>Distortion is strongest in the corners. Without corners detected there, it can only be extrapolated</td></tr>
+        <tr><td class="num">4</td><td>Next to each edge of the image (left, right, top, bottom), facing the camera</td><td>The same reason</td></tr>
+        <tr><td class="num">4</td><td>In the centre, tilted by 30–45°: once each with the top, bottom, left and right edges turned away from the camera</td><td>Tilted views pin down the focal length (without foreshortening from tilt, moving the board closer looks the same as a longer focal length)</td></tr>
+        <tr><td class="num">2</td><td>Tilted and rotated in-plane by 20–30°, in two different positions</td><td>More varied viewpoints</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>For every photo, keep the whole board (including a small white border) inside the frame (option A), make sure it is sharp, and tilt it by no more than about 60° — beyond that, the squares become too narrow to detect reliably.</p>
+    <div class="call">
+      <span class="lab">Why the list matters: a small RMS error proves nothing on its own</span>
+      <p>A simulated example: we render the printable board using a virtual webcam with the sample images' focal length and optical centre (640 × 480, f = 553 px) and known, moderately strong barrel distortion. Each set of 17 photos is then calibrated with the lab script twelve times with different random noise.</p>
+      <div class="tbl-wrap"><table class="tbl" style="max-width:44rem;margin:8px 0 10px">
+        <thead><tr><th>17 photos</th><th class="num">RMS error</th><th class="num">f<sub>x</sub> (true 553 px)</th><th class="num">Worst corner error in the undistorted image</th></tr></thead>
+        <tbody>
+          <tr><td>The shot list</td><td class="num">0.13 px</td><td class="num">552–554</td><td class="num">2 px (max 3)</td></tr>
+          <tr class="hot"><td>All in the centre, facing the camera</td><td class="num">0.11 px</td><td class="num">522–597</td><td class="num">7 px (max 18)</td></tr>
+        </tbody>
+      </table></div>
+      <p>The centre-only photos give an RMS error that is just as small (even slightly smaller), yet a focal length that can be up to 45 px off and image corners displaced by up to 18 px. With more image noise, as in a real webcam, it gets worse: the focal length from centre-only photos then ranges from 466 to 653 px.</p>
+    </div>
+    <h4 id="bad">Good and bad photos</h4>
+    <p>Below is one of the sample photos, and the same photo spoiled in five common ways. The captions say what the lab's detector does with each one. Glare and a board cut off by the frame are rejected, so the capture script won't save them. Blur is the dangerous one: the board is still found, the photo is saved, and its corners are in the wrong place.</p>
+    <div class="gallery bad-gallery">
+      <figure><div class="frame"><img src="img/sample_09.jpg" alt="Sharp photo of the whole board in even light" width="640" height="480" loading="lazy"></div><figcaption><span>Good</span><span class="r">Found</span></figcaption><p>Sharp, the whole board in view, even light. This is what every photo should look like.</p></figure>
+      <figure><div class="frame"><img src="img/bad_motion.jpg" alt="The same photo with horizontal motion blur" width="640" height="480" loading="lazy"></div><figcaption><span>Motion blur</span><span class="r red">Found, wrong</span></figcaption><p>The board moved while the shutter was open. Still detected, but the corners are about 1 px off on average (and up to 4 px). Hold the board still, or rest it on something, when you press <kbd>c</kbd>.</p></figure>
+      <figure><div class="frame"><img src="img/bad_defocus.jpg" alt="The same photo out of focus" width="640" height="480" loading="lazy"></div><figcaption><span>Out of focus</span><span class="r red">Found, 0.3 px off</span></figcaption><p>Too close for the lens, or autofocus hunting (constantly refocusing). Found, but the corners are about 0.3 px off, nearly the whole RMS error of a good calibration (0.35 px). Keep the board at a distance where it looks sharp, and lock the focus.</p></figure>
+      <figure><div class="frame"><img src="img/bad_glare.jpg" alt="The same photo with a bright reflection on the board" width="640" height="480" loading="lazy"></div><figcaption><span>Glare</span><span class="r red">Not found</span></figcaption><p>A light reflects off the paper and washes out some corners. Not found, so the photo is rejected. Tilt the board away from lamps and windows; matte paper helps.</p></figure>
+      <figure><div class="frame"><img src="img/bad_cutoff.jpg" alt="A close-up in which part of the board is outside the frame" width="640" height="480" loading="lazy"></div><figcaption><span>Board cut off</span><span class="r red">Not found</span></figcaption><p>Part of the board is outside the frame. Not found with the chessboard (option A), so the photo is rejected. A ChArUco board (option B) still works here.</p></figure>
+      <figure><div class="frame"><img src="img/bad_dark.jpg" alt="The same photo, very dark and noisy" width="640" height="480" loading="lazy"></div><figcaption><span>Too dark</span><span class="r">Found, fine</span></figcaption><p>Dim and noisy, but still found, and the corners are only 0.1 px off. Light level matters much less than blur and glare.</p></figure>
+    </div>
+    <p class="muted" style="font-size:15px;max-width:var(--measure)">Simulated from <code>calibration_image_09</code>. If one motion-blurred photo like this gets into the six samples, the RMS error rises from 0.354 to 0.54 px, and its own per-image error (1.02 px, compared with 0.2–0.6 px for the others) gives it away: check the per-image errors in <a class="sref" href="#s12">section 3.4</a> and retake any photo that stands out.</p>
+    <h4>Example: the six sample images</h4>
+    <p>These ship with the repo in <code>calibration_tutorial/intrinsic/sample_calibration_images/</code>. The views are sharp, the whole board is visible and the tilts vary, all of which is good. But there are only six, and the board never reaches the image corners:</p>
+    <div class="gallery">
+      <figure><div class="frame"><img src="img/sample_02.jpg" alt="Sample image 02" width="640" height="480" loading="lazy"></div><figcaption><span>calibration_image_02</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/sample_05.jpg" alt="Sample image 05" width="640" height="480" loading="lazy"></div><figcaption><span>calibration_image_05</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/sample_06.jpg" alt="Sample image 06" width="640" height="480" loading="lazy"></div><figcaption><span>calibration_image_06</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/sample_08.jpg" alt="Sample image 08" width="640" height="480" loading="lazy"></div><figcaption><span>calibration_image_08</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/sample_09.jpg" alt="Sample image 09" width="640" height="480" loading="lazy"></div><figcaption><span>calibration_image_09</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/sample_10.jpg" alt="Sample image 10" width="640" height="480" loading="lazy"></div><figcaption><span>calibration_image_10</span></figcaption></figure>
+    </div>
+    <figure class="fig" style="max-width:40rem">
+      <div class="frame"><svg class="diagram" id="coverage-svg" viewBox="0 0 640 480" role="img" aria-label="All 168 detected corners from the six sample images plotted on one 640 by 480 frame; the four corner regions of the frame contain only one corner in total"></svg></div>
+      <figcaption><span>Coverage: all 168 detected corners on one frame</span><span class="r">Red boxes: outer corners of the frame, 1 of 168 corners lands there</span></figcaption>
+    </figure>
+    <p>Aim for a coverage plot that fills the whole frame. While you capture, the green dots in the preview show the same thing (<a class="sref" href="#s10">section 3.1</a>); <a class="sref" href="#s17">section 5.1</a> has a snippet that saves this plot for your own photos.</p>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d7/d21/tutorial_interactive_calibration.html" target="_blank" rel="noopener">tutorial: Interactive camera calibration application › Calibration process</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/da/d0d/tutorial_camera_calibration_pattern.html" target="_blank" rel="noopener">tutorial: Create Calibration Pattern › Generic Recommendations</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>cv2.calibrateCamera</code></a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 09 -->
+<section class="s" id="s09">
+  <div class="s-head"><span class="n">2.4</span><h3>Set up</h3><span class="slide">Slide 12</span></div>
+  <div class="s-body">
+    <p>You can run this lab on your <b>laptop</b> (macOS, Windows or Linux) using its built-in webcam or a USB webcam.</p>
+    <ol class="steps">
+      <li><div>
+        <p><b>Activate the lab environment</b>, the same conda environment you use for the other COMP0241 labs, and check that OpenCV imports:</p>
+        <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">conda activate comp0241
+python -c "import cv2; print(cv2.__version__)"</code></pre></div>
+        <p>Option A works with any OpenCV 4 or 5. Option B needs OpenCV 4.7 or newer (including OpenCV 5), which has the ArUco functions it uses; on an older version of OpenCV, the ChArUco script stops and tells you. If you see <code>ModuleNotFoundError</code>, or a version below 4.7, install or update OpenCV inside the environment with <code>pip install -U opencv-contrib-python</code>.</p>
+      </div></li>
+      <li><div>
+        <p><b>Get the code.</b> The scripts are in the <code>calibration_tutorial/intrinsic/</code> folder of the course repository. If you already cloned it, pull the latest version; otherwise clone it:</p>
+        <div class="code"><div class="cap"><span class="file">Terminal · first time</span><button class="copy">Copy</button></div><pre><code class="language-bash">git clone https://github.com/WeianWang-OvO/comp0241_26.git
+cd comp0241_26/calibration_tutorial/intrinsic</code></pre></div>
+        <div class="code"><div class="cap"><span class="file">Terminal · already cloned</span><button class="copy">Copy</button></div><pre><code class="language-bash">cd comp0241_26
+git pull
+cd calibration_tutorial/intrinsic</code></pre></div>
+        <p>If you were given the <code>.py</code> files on Moodle instead, put them together in one folder and <code>cd</code> into it. You won't have the sample images then, so use your own photos.</p>
+      </div></li>
+      <li><div>
+        <p><b>Check the folder.</b> You should see:</p>
+        <div class="code out"><div class="cap"><span class="file">calibration_tutorial/intrinsic/</span></div><pre><code class="language-plaintext">intrinsic/
+├── w3_calibration_cap.py         capture photos with the keyboard (option A or B)
+├── w3_calibration_gui.py         capture photos in a window with buttons (section 3.2)
+├── camera_names.py               used by the window: the names of your cameras
+├── w3_calibration.py             option A: chessboard calibration and undistortion
+├── w3_calibration_charuco.py     option B: ChArUco calibration (and the optional fisheye model)
+├── sample_calibration_images/    6 example chessboard photos (for trying without a webcam)
+├── sample_charuco_images/        10 example ChArUco photos (option B)
+├── sample_fisheye_images/        18 rendered fisheye photos (optional, section 5.2)
+├── docs/                         this tutorial page (open docs/index.html in a browser)
+└── calibration_images/           created when you capture; the calibration reads from here</code></pre></div>
+      </div></li>
+    </ol>
+    <div class="call">
+      <span class="lab">Run them from anywhere</span>
+      <p>The scripts always look for <code>calibration_images/</code> in the same folder as the script itself, so they work from any working directory and with VS Code's Run button. Their outputs (<code>calibration_data.npz</code>, <code>undistorted_example.jpg</code>) are also saved in that folder.</p>
+    </div>
+
+  </div>
+</section>
+
+</section>
+
+<!-- ####################################################### part-3 -->
+<section class="part-s" id="part-3">
+  <div class="p-head"><span class="n">3</span><h2>Capture and calibrate</h2></div>
+
+<!-- ======================================================= 10 -->
+<section class="s" id="s10">
+  <div class="s-head"><span class="n">3.1</span><h3>Capture images</h3><span class="slide">Slide 12</span></div>
+  <div class="s-body">
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python w3_calibration_cap.py</code></pre></div>
+    <p>A window called <b>Calibration Capture</b> shows the live camera feed. While the board is in view, its corners are drawn on the preview. The counter in the corner (“saved 3/17”) turns green, and small green dots mark the corners of the photos you have already saved, so you can see which parts of the frame still need covering. <b>Click on the window first</b> so that it receives your key presses, then:</p>
+    <table class="tbl" style="max-width:40rem">
+      <thead><tr><th>Key</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>c</kbd></td><td>Save the current frame as <code>calibration_images/calibration_image_NN.jpg</code>, but only while the board's corners are drawn; otherwise it prints “No chessboard detected”</td></tr>
+        <tr><td><kbd>q</kbd> or <kbd>Esc</kbd></td><td>Quit</td></tr>
+      </tbody>
+    </table>
+    <p>Work through the <a href="#shots">shot list</a> and the checklist of <a class="sref" href="#s08">section 2.3</a>: 17 photos. The saved photos are clean (without overlays): the corners and dots appear only in the preview.</p>
+    <table class="tbl" style="max-width:48rem">
+      <thead><tr><th>Option</th><th>Use it when</th></tr></thead>
+      <tbody>
+        <tr><td><code>python w3_calibration_cap.py 1</code></td><td>Camera 0 is the wrong camera (an external webcam, or an iPhone via Continuity Camera on a Mac); also try 2</td></tr>
+        <tr><td><code>python w3_calibration_cap.py charuco</code></td><td>You use the ChArUco board (option B): it then waits for ChArUco corners instead, and accepts a board that is partly out of view</td></tr>
+      </tbody>
+    </table>
+    <p>Options can be combined in any order, e.g. <code>python w3_calibration_cap.py 1 charuco</code>. Here is what the script does:</p>
+    <details class="fold"><summary><span class="k">Code · 2 parts</span><span class="what">Finding the board<span class="sep">/</span>Saving</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration_cap.py · lines 27–32</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="27" data-hl="27,32">def find_board(gray):
+    """Return (found, corners) for the chosen board. A ChArUco board may be partly outside the frame."""
+    if use_charuco:
+        obj, corners, ids, _, _ = detect_board(gray)
+        return obj is not None, corners
+    return cv2.findChessboardCorners(gray, chessboard_size, flags=flags)</code></pre></div></div>
+      <div class="w-note"><span class="lab">Finding the board</span><p>Before saving, the script checks the frame for the board you chose. For the chessboard it uses <code>findChessboardCorners</code> with <code>CALIB_CB_FAST_CHECK</code>, which quickly rejects frames without a board so the preview stays smooth. For ChArUco it uses the same detector as <code>w3_calibration_charuco.py</code>.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga93efa9b0aa890de240ca32b11253dd4a" target="_blank" rel="noopener"><code>cv2.findChessboardCorners</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d4/d94/tutorial_camera_calibration.html" target="_blank" rel="noopener">tutorial: Camera calibration With OpenCV › Explanation</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/calibinit.cpp" target="_blank" rel="noopener">source: calibinit.cpp</a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration_cap.py · lines 103–114</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="103" data-hl="106,109">    if key in (ord(capture_key), ord(capture_key.upper())):  # Capture and save the image
+        if found:
+            image_path = os.path.join(output_folder, f"calibration_image_{image_count:02d}.jpg")
+            if cv2.imwrite(image_path, frame):
+                image_count += 1
+                saved_count += 1
+                coverage.extend(corners.reshape(-1, 2))
+                print(f"Image saved: {os.path.relpath(image_path, script_dir)}  ({saved_count}/{target})")
+            else:
+                print(f"Error: could not write {image_path} - check that the folder is writable.")
+        else:
+            print(f"No {'ChArUco board' if use_charuco else 'chessboard'} detected. Please adjust the position and try again.")</code></pre></div></div>
+      <div class="w-note"><span class="lab">Saving</span><p>A frame is saved only if the board is detected, and the script saves the raw camera frame rather than the annotated preview. Its corners are added to the green coverage dots.</p><p>Numbering continues after the photos already in the folder, so a second session adds to the first instead of overwriting it.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">tutorial: Camera Calibration › Setup</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d7/d21/tutorial_interactive_calibration.html" target="_blank" rel="noopener">tutorial: Interactive camera calibration application › Calibration process</a></p></div>
+    </div>
+    </details>
+    <div class="call">
+      <span class="lab">Adding photos later, or starting over</span>
+      <p>Run the script again: it prints how many earlier photos are in <code>calibration_images/</code>, shows their corners as green dots and carries on numbering. If you change camera or resolution, empty the folder first so that the calibration doesn't mix images from different setups.</p>
+    </div>
+    <div class="call try">
+      <span class="lab">No webcam, or just want to try first?</span>
+      <p>Copy the sample images into <code>calibration_images/</code> and skip to <a class="sref" href="#s11">section 3.3</a>. Empty the folder again before capturing your own photos (<code>rm calibration_images/*</code> on macOS or Linux; <code>del calibration_images\*</code> on Windows); otherwise your photos will be numbered after the samples and calibrated together with them.</p>
+      <div class="code"><div class="cap"><span class="file">macOS / Linux</span><button class="copy">Copy</button></div><pre><code class="language-bash">mkdir -p calibration_images
+cp sample_calibration_images/*.jpg calibration_images/</code></pre></div>
+      <div class="code"><div class="cap"><span class="file">Windows · Anaconda Prompt or PowerShell</span><button class="copy">Copy</button></div><pre><code class="language-plaintext">mkdir calibration_images
+copy sample_calibration_images\*.jpg calibration_images\</code></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================= gui -->
+<section class="s" id="gui">
+  <div class="s-head"><span class="n">3.2</span><h3>Or capture in a window with buttons</h3></div>
+  <div class="s-body">
+    <p>An alternative to <code>w3_calibration_cap.py</code>: the same photos in the same folder, from a window that also shows where the board has been and a live estimate of the calibration result.</p>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python w3_calibration_gui.py</code></pre></div>
+    <p>Pick your camera (the list shows the names your computer gives the cameras; <b>Scan</b> checks which ones produce images), the image size and the board you printed, then press <b>Start</b>. A photo is saved only when the board is found and has been still for half a second, and only once per position: move or tilt the board before the next one.</p>
+    <figure class="fig" style="max-width:60rem">
+      <div class="frame"><img src="img/gui_preview.jpg" alt="The capture window: the live camera image with the chessboard's corners drawn and small green circles where earlier photos had corners; on the right, a panel over a 3 by 3 grid where five saved board positions are filled in green, the parts no photo covers are dark red, and the board in view now is outlined in white" width="1080" height="540" loading="lazy"></div>
+      <figcaption><span>The capture window, with the sample photos as the camera</span><span class="r">red: no photo there yet</span></figcaption>
+    </figure>
+    <table class="tbl" style="max-width:60rem">
+      <thead><tr><th>In the window</th><th>What it shows or does</th></tr></thead>
+      <tbody>
+        <tr><td>Green circles on the live image</td><td>The corners of the photos saved so far</td></tr>
+        <tr><td><b>Board positions</b> panel</td><td>Every saved board filled in green, brighter where boards overlap; in red, the parts of the image that no photo covers yet; and the currently visible board as a white outline. Move the board into the red, especially the corners (<a class="sref" href="#s08">section 2.3</a>). A thin red band along the edges always remains, because the green covers only the area inside the board's corners: make it as thin as you can. A ChArUco board, which can extend past the frame edge, lets you shrink this band further.</td></tr>
+        <tr><td><b>Auto save</b></td><td>Saves automatically each time you hold the board still in a new position, so you can hold the board with both hands</td></tr>
+        <tr><td><b>Wait until still</b></td><td>On by default: a photo is saved only once the board has been still for half a second, so it is sharp; the status line shows how much it is moving. Untick it to save without this check (Auto save then saves each new position, at most once a second), and hold the board steady yourself</td></tr>
+        <tr><td>Estimate line</td><td>Once you have 4 photos, the window calibrates in the background and shows f<sub>x</sub>, f<sub>y</sub>, c<sub>x</sub>, c<sub>y</sub> and the RMS error, with the verdict of <a class="sref" href="#s12">section 3.4</a>. Watch the numbers settle as you add photos.</td></tr>
+        <tr><td><b>Undistorted</b></td><td>The live image corrected with that estimate (<a class="sref" href="#s13">section 3.5</a>)</td></tr>
+        <tr><td><b>Fisheye model</b></td><td>Optional: the estimate with the fisheye model of <a class="sref" href="#fisheye">section 5.2</a>; webcams don't need it</td></tr>
+      </tbody>
+    </table>
+    <table class="tbl" style="max-width:40rem">
+      <thead><tr><th>Key</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Space</kbd> or <kbd>c</kbd></td><td>Save a photo (the big button does the same)</td></tr>
+        <tr><td><kbd>u</kbd></td><td>Undo: delete the last photo this window saved in this folder (press again for the one before); earlier photos stay</td></tr>
+        <tr><td><kbd>q</kbd> or <kbd>Esc</kbd></td><td>Quit</td></tr>
+      </tbody>
+    </table>
+    <p>The photos go to <code>calibration_images/</code>, as with the capture script, so <a class="sref" href="#s11">section 3.3</a> carries on unchanged. If you choose a different folder, <code>w3_calibration.py</code> won't find the photos there; for a ChArUco board, you can pass that folder path to <code>python w3_calibration_charuco.py</code>.</p>
+    <details class="fold"><summary><span class="k">Code · 2 parts</span><span class="what">The board-positions panel<span class="sep">/</span>The running estimate</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration_gui.py · lines 679–703</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="679" data-hl="691,692,693,694,695">    def positions_panel(self, size, current):
+        """Every saved board filled in green, brighter where boards overlap (as in OpenCV's interactive
+        calibration app), the parts no saved board has covered yet in red, and the board in view now as a
+        white outline."""
+        w, h = size
+        scale = 0.5
+        panel = np.zeros((int(h * scale), int(w * scale), 3), np.uint8)
+        covered = np.zeros(panel.shape[:2], np.uint8)
+        for view in self.views:
+            if view['size'] != size:
+                continue
+            fill = np.zeros_like(panel)
+            hull = cv2.convexHull((view['image'] * scale).astype(np.int32))
+            cv2.fillConvexPoly(fill, hull, (0, 255, 0), cv2.LINE_AA)
+            cv2.fillConvexPoly(covered, hull, 255)
+            panel = cv2.addWeighted(fill, 0.2, panel, 1.0, 0)
+        panel[covered == 0] = (0, 0, 120)  # dark red: no board there yet, so the calibration knows nothing about it
+        if current is not None:
+            hull = cv2.convexHull((current['image'] * scale).astype(np.int32))
+            cv2.polylines(panel, [hull], True, (255, 255, 255), 2, cv2.LINE_AA)
+        # the image split in thirds: a calibration needs the board in each of the nine parts
+        for k in (1, 2):
+            cv2.line(panel, (int(k * panel.shape[1] / 3), 0), (int(k * panel.shape[1] / 3), panel.shape[0]), (90, 90, 90), 1)
+            cv2.line(panel, (0, int(k * panel.shape[0] / 3)), (panel.shape[1], int(k * panel.shape[0] / 3)), (90, 90, 90), 1)
+        return panel</code></pre></div></div>
+      <div class="w-note"><span class="lab">The board-positions panel</span><p>For each saved photo, the outline of its corners (the convex hull) is filled in green on a black image at half size, and added with a weight of 0.2. Where boards overlap the green adds up, so well-covered parts are bright. The same outlines also go into a mask, <code>covered</code>, and every pixel outside all of them turns red: no photo has told the calibration anything about that part of the image yet.</p><p>The green fill is how OpenCV's interactive calibration application draws its board positions: its <code>drawBoard</code> does the same hull, fill and weighted add. The red shading for uncovered areas is this window's addition.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d2/de8/group__core__array.html#gafafb2513349db3bcff51f54ee5592a19" target="_blank" rel="noopener"><code>cv2.addWeighted</code></a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/apps/interactive-calibration/frameProcessor.cpp" target="_blank" rel="noopener">based on: interactive calibration, frameProcessor.cpp</a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration_gui.py · lines 103–117</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="103" data-hl="110,116">def calibrate(views, size, board, fisheye):
+    """(K, D, rms) from the saved views, with the model the calibration script for this board uses:
+    k3 fixed for the chessboard (as in w3_calibration.py), free for ChArUco (as in w3_calibration_charuco.py),
+    or the optional fisheye model."""
+    obj = [v['object'].astype(np.float32) for v in views]
+    img = [v['image'].reshape(-1, 1, 2).astype(np.float32) for v in views]
+    if fisheye:
+        rms, K, D, _, _ = cv2.fisheye.calibrate(
+            [o.reshape(-1, 1, 3).astype(np.float64) for o in obj], [i.astype(np.float64) for i in img], size,
+            np.zeros((3, 3)), np.zeros((4, 1)), flags=cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | cv2.fisheye.CALIB_FIX_SKEW,
+            criteria=(cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS, 100, 1e-7))
+    else:
+        flags = cv2.CALIB_FIX_K3 if board == 'chessboard' else 0
+        rms, K, D, _, _ = cv2.calibrateCamera(obj, img, size, None, None, flags=flags, criteria=SOLVER)
+    return K, D, rms</code></pre></div></div>
+      <div class="w-note"><span class="lab">The running estimate</span><p>This runs the calibration from step 4 on the photos saved so far in a background thread so the window stays responsive. It uses the model the script for your board will use: k<sub>3</sub> fixed for the chessboard, as <code>w3_calibration.py</code> does, and free for ChArUco, as <code>w3_calibration_charuco.py</code> does. With all the photos saved, it matches the result the script will print.</p><p>It allows up to 500 iterations (<code>SOLVER</code>), as <code>w3_calibration_charuco.py</code> does. <code>w3_calibration.py</code> keeps OpenCV's default of 30, which gives the same numbers on an ordinary webcam but can stop early on a wide-angle lens.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>cv2.calibrateCamera</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#gad626a78de2b1dae7489e152a5a5a89e1" target="_blank" rel="noopener"><code>cv2.fisheye.calibrate</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d7/d21/tutorial_interactive_calibration.html" target="_blank" rel="noopener">tutorial: Interactive camera calibration application › Main application features</a></p></div>
+    </div>
+    </details>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d7/d21/tutorial_interactive_calibration.html" target="_blank" rel="noopener">tutorial: Interactive camera calibration application › Calibration process</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/apps/interactive-calibration/main.cpp" target="_blank" rel="noopener">source: apps/interactive-calibration</a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 11 -->
+<section class="s" id="s11">
+  <div class="s-head"><span class="n">3.3</span><h3>Run the calibration</h3><span class="slide">Slides 10, 12</span></div>
+  <div class="s-body">
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python w3_calibration.py</code></pre></div>
+    <p>The script prints one line per photo, then how many were usable. A <b>Chessboard</b> window flashes through each photo with the detected corners drawn in colour, and each of these is saved next to the original as <code>…_corners_detected.jpg</code> (the next run ignores these files). Then the results are printed, and two windows show the original and the undistorted image; press any key in one of them to finish. On the six sample images, you get (without a display, the last line is omitted):</p>
+    <div class="code out"><div class="cap"><span class="file">Output · sample images</span></div><pre><code class="language-plaintext">calibration_image_02.jpg: chessboard found
+calibration_image_05.jpg: chessboard found
+calibration_image_06.jpg: chessboard found
+calibration_image_08.jpg: chessboard found
+calibration_image_09.jpg: chessboard found
+calibration_image_10.jpg: chessboard found
+
+Chessboard found in 6 of 6 images (640x480)
+WARNING: fewer than 10 views - the result will be unreliable (slide 9: capture 10-20)
+Camera Matrix:
+ [[552.90384805   0.         362.66553508]
+ [  0.         553.17026434 230.86274297]
+ [  0.           0.           1.        ]]
+
+Distortion Coefficients:
+ [[ 0.03648159 -0.02245417 -0.00270735 -0.00039947  0.        ]]
+
+RMS re-projection error per image (px):
+  calibration_image_02.jpg: 0.608
+  calibration_image_05.jpg: 0.215
+  calibration_image_06.jpg: 0.220
+  calibration_image_08.jpg: 0.411
+  calibration_image_09.jpg: 0.234
+  calibration_image_10.jpg: 0.254
+total error: 0.06112377076115629
+RMS re-projection error: 0.3540 px
+Undistorted image saved as undistorted_example.jpg (636x475)
+Showing the original and undistorted images: press any key in one of the windows to finish (add nogui to skip the windows).</code></pre></div>
+    <div class="gallery">
+      <figure><div class="frame"><img src="img/corners_02.jpg" alt="Detected corners, image 02" width="640" height="480" loading="lazy"></div><figcaption><span>02_corners_detected</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/corners_05.jpg" alt="Detected corners, image 05" width="640" height="480" loading="lazy"></div><figcaption><span>05_corners_detected</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/corners_06.jpg" alt="Detected corners, image 06" width="640" height="480" loading="lazy"></div><figcaption><span>06_corners_detected</span></figcaption></figure>
+    </div>
+    <p>A photo marked <code>chessboard NOT found - skipped</code> is left out. That's fine if you still have 10 or more good ones; below 10 the script warns you, and below 3 it stops.</p>
+
+    <h4>What the script does, step by step</h4>
+    <details class="fold"><summary><span class="k">Code · 4 parts</span><span class="what">Step 1 · The 3D points<span class="sep">/</span>Steps 2–3 · The 2D points<span class="sep">/</span>Checks before calibrating<span class="sep">/</span>Steps 4–6 · Calibrate and save</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration.py · lines 8–24</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="8" data-hl="12,24"># Step 1: Prepare object points
+# Define the chessboard size (number of internal corners)
+chessboard_size = (4, 7)  # INNER corners = (squares - 1) per direction; the calib.io 5x8-square board is (4, 7)
+square_size = 34.0  # Edge of one printed square in mm. It only scales tvecs: K, distortion and errors do not depend on it
+fix_k3 = True  # Few views that do not reach the image corners cannot pin down k3, so keep it at 0
+
+# Paths are relative to this script, so it works from any working directory (e.g. the VS Code Run button)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+image_folder = os.path.join(script_dir, 'calibration_images')
+# Windows need a display. Without one (e.g. over SSH), or with "nogui", pictures are only saved to files
+show = 'nogui' not in [a.lower() for a in sys.argv[1:]] and (not sys.platform.startswith('linux')
+                                                             or bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')))
+
+# Prepare the object points for a standard chessboard
+objp = np.zeros((chessboard_size[0] * chessboard_size[1], 3), np.float32)
+objp[:, :2] = np.mgrid[0:chessboard_size[0], 0:chessboard_size[1]].T.reshape(-1, 2)
+objp *= square_size</code></pre></div></div>
+      <div class="w-note"><span class="lab">Step 1 · The 3D points</span><p>The board defines the world coordinate system: its first inner corner is the origin and the board lies in the plane \(Z = 0\). <code>objp</code> lists the 28 corners as <code>(0,0,0), (34,0,0), (68,0,0), (102,0,0), (0,34,0), …</code> in millimetres. These are the “3D coordinates in real-world space” of slide 10, the same for every photo.</p><p><code>fix_k3 = True</code> keeps the sixth-order distortion term at zero; <a class="sref" href="#s14">section 4.1</a> shows why. <code>show</code> is <code>False</code> when there is no display (e.g. over SSH) or when you pass <code>nogui</code>; the images are then saved to files without opening any windows.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">based on: Camera Calibration › Setup</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/python/calibrate.py" target="_blank" rel="noopener">sample: calibrate.py</a></p></div>
+
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration.py · lines 33–67</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="33" data-hl="34,49,54,64"># Step 2: Load calibration images (the captures only, not the *_corners_detected overlays written below)
+images = sorted(f for f in glob.glob(os.path.join(image_folder, '*'))
+                if f.lower().endswith(('.jpg', '.jpeg', '.png')) and '_corners_detected' not in os.path.basename(f))
+if not images:
+    sys.exit(f"No images found in {image_folder}\n"
+             "Run w3_calibration_cap.py first, or copy the files from sample_calibration_images/ into calibration_images/.")
+
+for fname in images:
+    name = os.path.basename(fname)
+    img = cv2.imread(fname)
+    if img is None:
+        print(f"{name}: cannot be read - skipped")
+        continue
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Step 3: Find the chessboard corners, then refine them to sub-pixel accuracy
+    ret, corners = cv2.findChessboardCorners(gray, chessboard_size, None)
+
+    if not ret:
+        print(f"{name}: chessboard NOT found - skipped")
+        continue
+    corners = cv2.cornerSubPix(gray, corners, (5, 5), (-1, -1), criteria)
+    detections.append((fname, gray.shape[::-1], corners))
+    print(f"{name}: chessboard found")
+
+    # Optional: Draw and display the corners for visualization
+    cv2.drawChessboardCorners(img, chessboard_size, corners, ret)
+    if show:
+        cv2.imshow('Chessboard', img)
+        cv2.waitKey(500)
+    root, ext = os.path.splitext(fname)
+    cv2.imwrite(root + '_corners_detected' + ext, img)
+
+if show:
+    cv2.destroyAllWindows()</code></pre></div></div>
+      <div class="w-note"><span class="lab">Steps 2–3 · The 2D points</span><p>The script reads every <code>.jpg</code>, <code>.jpeg</code> or <code>.png</code> in the folder, except its own <code>_corners_detected</code> overlays.</p><p><code>findChessboardCorners</code> locates the 28 corners and refines them slightly in a 5 × 5-pixel window; because a true corner rarely lands on an exact integer pixel, <code>cornerSubPix</code> refines each one to sub-pixel accuracy using the image intensity gradients in an 11 × 11-pixel window (<code>(5, 5)</code> is the half-width). The corners come out in a fixed order that matches <code>objp</code>: these are the 3D–2D pairs required by slide 8.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga93efa9b0aa890de240ca32b11253dd4a" target="_blank" rel="noopener"><code>cv2.findChessboardCorners</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dd/d1a/group__imgproc__feature.html#ga354e0d7c86d0d9da75de9b9701a9a87e" target="_blank" rel="noopener"><code>cv2.cornerSubPix</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">based on: Camera Calibration › Setup</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/calibinit.cpp" target="_blank" rel="noopener">source: calibinit.cpp</a></p></div>
+
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration.py · lines 73–87</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="73" data-hl="74,84,86"># All views must come from one camera at one resolution: keep the most common image size
+image_size = Counter(size for _, size, _ in detections).most_common(1)[0][0]
+for fname, size, corners in detections:
+    if size != image_size:
+        print(f"{os.path.basename(fname)}: size {size} differs from {image_size} - skipped")
+        continue
+    objpoints.append(objp)  # Add object points
+    imgpoints.append(corners)  # Add image points
+    used_files.append(fname)
+
+print(f"\nChessboard found in {len(objpoints)} of {len(images)} images ({image_size[0]}x{image_size[1]})")
+if len(objpoints) &lt; 3:
+    sys.exit("At least 3 views are needed. Capture more images with the whole board visible.")
+if len(objpoints) &lt; 10:
+    print("WARNING: fewer than 10 views - the result will be unreliable (slide 9: capture 10-20)")</code></pre></div></div>
+      <div class="w-note"><span class="lab">Checks before calibrating</span><p>All photos must come from one camera at one resolution, because K is in pixels. Photos of another size are skipped with a message. The script then needs at least 3 usable photos and warns below the 10 that slide 9 asks for.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d4/d94/tutorial_camera_calibration.html" target="_blank" rel="noopener">tutorial: Camera calibration With OpenCV › Theory</a></p></div>
+
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration.py · lines 89–100</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="89" data-hl="90,91,99"># Step 4: Perform camera calibration (ret = RMS re-projection error in pixels, the formula on slide 10)
+flags = cv2.CALIB_FIX_K3 if fix_k3 else 0
+ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, image_size, None, None,
+                                                                    flags=flags)
+
+# Step 5: Display results
+print("Camera Matrix:\n", camera_matrix)
+print("\nDistortion Coefficients:\n", dist_coeffs)
+
+# Step 6: Save the calibration results
+np.savez(os.path.join(script_dir, 'calibration_data.npz'), camera_matrix=camera_matrix, dist_coeffs=dist_coeffs,
+         rvecs=rvecs, tvecs=tvecs, image_size=image_size, rms=ret)</code></pre></div></div>
+      <div class="w-note"><span class="lab">Steps 4–6 · Calibrate and save</span><p>This one call does the actual work using Zhang's method (the standard algorithm for solving camera intrinsics from multiple views of a flat pattern). It finds the K, distortion coefficients and board poses that make the projected <code>objpoints</code> land as close as possible to the detected <code>imgpoints</code>. <code>image_size</code> is (width, height).</p><p>The results go into <code>calibration_data.npz</code> next to the script, with the image size and the RMS error, so you can reuse them later (<a class="sref" href="#s17">section 5.1</a>).</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>cv2.calibrateCamera</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">based on: Camera Calibration › Calibration</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/calibration.cpp" target="_blank" rel="noopener">source: calibration.cpp</a></p></div>
+    </div>
+    </details>
+
+    <h4>The outputs of <code>cv2.calibrateCamera</code></h4>
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Output</th><th>Kind</th><th>What it is</th><th>Sample images</th></tr></thead>
+      <tbody>
+        <tr><td><code>retval</code> (the script calls it <code>ret</code>)</td><td>Quality</td><td>RMS reprojection error over all corners, in pixels (<a class="sref" href="#s12">section 3.4</a>); printed as <code>RMS re-projection error: … px</code></td><td class="num">0.354 px</td></tr>
+        <tr><td><code>cameraMatrix</code></td><td>Intrinsic</td><td>The 3 × 3 matrix K: \(f_x, f_y, c_x, c_y\) in pixels</td><td class="num">f ≈ 553 px</td></tr>
+        <tr><td><code>distCoeffs</code></td><td>Intrinsic</td><td>\((k_1, k_2, p_1, p_2, k_3)\)</td><td class="num">1 × 5</td></tr>
+        <tr><td><code>rvecs</code></td><td>Extrinsic</td><td>One rotation per photo, as a 3-vector (axis–angle representation; <code>cv2.Rodrigues</code> converts it to a 3 × 3 rotation matrix R): how the board was turned relative to the camera</td><td class="num">6 × (3, 1)</td></tr>
+        <tr><td><code>tvecs</code></td><td>Extrinsic</td><td>One translation per photo: where the board's origin was, in camera coordinates, in the units of <code>square_size</code> (here mm)</td><td class="num">z = 273–390 mm</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="call">
+      <span class="lab">Note</span>
+      <p><code>rvecs</code> and <code>tvecs</code> are not part of the camera matrix: they are the <b>extrinsics</b>, one board pose per photo, as in the table above.</p>
+    </div>
+
+    <h4 id="run-b">Option B: run the ChArUco calibration</h4>
+    <p>Capture with <code>python w3_calibration_cap.py charuco</code>, then:</p>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python w3_calibration_charuco.py</code></pre></div>
+    <p>It reads <code>calibration_images/</code> next to the script. To try it first on the 10 ChArUco photos in <code>sample_charuco_images/</code> (taken with an iPhone and resized to 756 × 756), pass that folder as an argument:</p>
+    <div class="code"><div class="cap"><span class="file">Terminal · inside calibration_tutorial/intrinsic/</span><button class="copy">Copy</button></div><pre><code class="language-bash">python w3_calibration_charuco.py sample_charuco_images</code></pre></div>
+    <div class="code out"><div class="cap"><span class="file">Output · sample ChArUco photos (shortened; OpenCV 4.14. OpenCV 4.12 gives slightly different numbers, e.g. cx 386.7 and RMS 0.386)</span></div><pre><code class="language-plaintext">resized_IMG_9853.jpg: 24 of 24 corners
+  …
+resized_IMG_9862.jpg: 24 of 24 corners
+
+Used 10 of 10 photos, image size (756, 756)
+Camera Matrix:
+ [[769.92079367   0.         386.23087411]
+ [  0.         772.35691993 376.65597245]
+ [  0.           0.           1.        ]]
+
+Distortion Coefficients:
+ [ 4.07316573e-01 -3.18077223e+00 -1.74548075e-04  4.08808768e-03
+  8.59113494e+00]
+
+RMS reprojection error (px): 0.3854411840842758
+
+Per-photo RMS (px):
+  resized_IMG_9853.jpg: 0.348
+  …</code></pre></div>
+    <details class="fold"><summary><span class="k">Code · 1 part</span><span class="what">What changes from option A</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration_charuco.py · lines 59–62</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="59" data-hl="59,62">    corners, ids, marker_corners, marker_ids = detector.detectBoard(gray)
+    if ids is None or len(ids) &lt; MIN_CORNERS:
+        return None, None, None, marker_corners, marker_ids
+    obj, img = board.matchImagePoints(corners, ids)  # each corner's 3D position on the board, found by its ID</code></pre></div></div>
+      <div class="w-note"><span class="lab">What changes from option A</span><p><code>detectBoard</code> reads the markers, then finds the chessboard corners between them, each with its ID. <code>matchImagePoints</code> looks up each ID's position on the board, giving the same 3D–2D pairs as <code>objp</code> and <code>corners</code> in option A, but only for the corners that were seen. Those go into the same <code>cv2.calibrateCamera</code> call.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/df5/classcv_1_1aruco_1_1CharucoDetector.html#aacbea601612a3a0feaa45ebb7fb255fd" target="_blank" rel="noopener"><code>CharucoDetector.detectBoard</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d4/db2/classcv_1_1aruco_1_1Board.html#a305c3c47c1f87562ed06de5c7e703e4f" target="_blank" rel="noopener"><code>Board.matchImagePoints</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/df/d4a/tutorial_charuco_detection.html" target="_blank" rel="noopener">based on: Detection of ChArUco Boards › ChArUco Board Detection</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/modules/objdetect/src/aruco/charuco_detector.cpp" target="_blank" rel="noopener">source: charuco_detector.cpp</a></p></div>
+    </div>
+    </details>
+    <p>Like the option-A script, it prints the RMS error and the per-photo errors, skips photos of a different size, and works from any folder; its overlays go to <code>charuco_detections/</code>.</p>
+    <figure class="fig" style="max-width:30rem">
+      <div class="frame"><img src="img/charuco_partial.jpg" alt="Photo with only part of a ChArUco board in view; 13 corners are marked with their IDs" width="900" height="1200" loading="lazy"></div>
+      <figcaption><span>Half the board out of view: 13 corners, each with its ID</span></figcaption>
+    </figure>
+    <p>On 11 photos with part of the board out of view, the ChArUco detector finds 5–22 corners in every photo, while the chessboard detector finds its grid in only 2 of them. That is the point of option B: views like this can push the board into the corners of the image. The cost is sharpness: on blurred photos some views yield only 4 of 24 corners, because the markers can no longer be read.</p>
+    <div class="call">
+      <span class="lab">Same lesson as option A</span>
+      <p>The ten repo photos all show the whole board in the middle of the frame. The RMS error is a good 0.39 px, yet the distortion coefficients are wild (k₂ = −3.2, k₃ = 8.6), because nothing constrains the edges of the image. With your own photos, use what option B makes possible: let the board extend past the frame edges so the detected corners reach the image corners.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================= 12 -->
+<section class="s" id="s12">
+  <div class="s-head"><span class="n">3.4</span><h3>Reprojection error</h3><span class="slide">Slide 10</span></div>
+  <div class="s-body">
+    <p>How do you know whether the calibration is any good? Take the estimated parameters, <b>project</b> the known 3D board corners back into each photo with <code>cv2.projectPoints</code>, and measure how far they land from the corners that were actually detected. Taking the root-mean-square (RMS) distance over all \(N\) corners in all photos gives:</p>
+    <div class="math">$$\text{RMS reprojection error} = \sqrt{\frac{1}{N}\sum_{i=1}^{N} \big\lVert\, p^{(i)}_{\text{observed}} - p^{(i)}_{\text{projected}} \,\big\rVert^2}\quad\text{(pixels)}$$</div>
+    <p>Each corner contributes a small error vector. Below, they are drawn <b>magnified</b> on top of the photo, because at their true size (a fraction of a pixel) they would be invisible.</p>
+
+    <div class="widget" id="res-widget">
+      <div class="w-top"><span>Reprojection residuals · sample images</span><span class="hint">Real data from the six photos</span></div>
+      <div class="w-body">
+        <div class="w-stage"><svg id="res-svg" viewBox="0 0 640 480" role="img" aria-label="Detected corners with magnified error vectors"></svg></div>
+        <div class="w-side">
+          <div class="seg" id="res-imgs" role="group" aria-label="Choose image"></div>
+          <div class="sl hot"><label for="res-mag">Magnification</label><span class="val" id="res-magv"></span><input type="range" id="res-mag" min="10" max="300" step="10" value="100"></div>
+          <dl class="stats" id="res-stats"></dl>
+          <div><svg id="res-bars" viewBox="0 0 300 172" style="display:block;width:100%;height:auto" role="img" aria-label="Per-image RMS error bar chart"></svg></div>
+        </div>
+      </div>
+      <div class="w-foot muted">Click <b>02</b>: it has the largest error (0.61 px RMS; the other five are 0.21–0.41 px), and its worst corner is off by about 1 px. Image 02 is the worst because the printed sheet in the samples is bent by up to about 1 mm, and no lens model can absorb a bent board. A single bad photo can skew the entire calibration, so check the per-image errors, not just the overall RMS.</div>
+    </div>
+
+    <h4>What does the script print?</h4>
+    <details class="fold"><summary><span class="k">Code · 1 part</span><span class="what">Three error numbers</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration.py · lines 102–112</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="102" data-hl="109,111,112"># Re-projection error (printed before the undistortion demo, so it is never lost)
+mean_error = 0
+print("\nRMS re-projection error per image (px):")
+for i in range(len(objpoints)):
+    imgpoints2, _ = cv2.projectPoints(objpoints[i], rvecs[i], tvecs[i], camera_matrix, dist_coeffs)
+    error = cv2.norm(imgpoints[i].reshape(-1, 2), imgpoints2.reshape(-1, 2), cv2.NORM_L2) / len(imgpoints2)
+    mean_error += error
+    print(f"  {os.path.basename(used_files[i])}: {error * np.sqrt(len(imgpoints2)):.3f}")
+
+print("total error: {}".format(mean_error / len(objpoints)))  # OpenCV-tutorial metric: about RMS / sqrt(corners per image)
+print(f"RMS re-projection error: {ret:.4f} px")</code></pre></div></div>
+      <div class="w-note"><span class="lab">Three error numbers</span><p>The <b>per-image</b> lines are each photo's RMS error. The last line, <b>RMS re-projection error</b>, is <code>ret</code> from <code>calibrateCamera</code>: exactly the formula of slide 10. This is the number to report.</p><p><b>“total error”</b> is the line from the official OpenCV tutorial, which slide 13 also shows. <code>cv2.norm(…, NORM_L2)</code> is \(\sqrt{\sum \lVert e\rVert^2}\) for one photo; dividing it by the photo's 28 corners, instead of putting the 28 inside the square root, makes it at least \(\sqrt{28} \approx 5.3\) times smaller than the RMS error (5.8 times on the samples: 0.061 against 0.354 px). Older versions of the OpenCV tutorial computed it the same way; the current version squares the norms and takes a square root.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c" target="_blank" rel="noopener"><code>cv2.projectPoints</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d2/de8/group__core__array.html#gae15fc2d956eb3a93ec65339a50dc7b6a" target="_blank" rel="noopener"><code>cv2.norm</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">based on: Camera Calibration › Re-projection Error (its older form)</a></p></div>
+    </div>
+    </details>
+    <table class="tbl" style="max-width:40rem">
+      <thead><tr><th>RMS error</th><th>Verdict for a 640 × 480 webcam</th></tr></thead>
+      <tbody>
+        <tr><td class="num">&lt; 0.5 px</td><td>Good</td></tr>
+        <tr><td class="num">0.5–1 px</td><td>Usable; look for blurry or badly detected photos and retake them</td></tr>
+        <tr><td class="num">&gt; 1 px</td><td>Something is wrong: a curled board, motion blur, mixed resolutions or cameras</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:15px">A low error shows that the model fits <em>your photos</em>. It cannot tell you about parts of the image your photos never covered, or about a focal length your views cannot pin down: in <a class="sref" href="#shots">section 2.3</a>, 17 centre-facing photos give an RMS error as small as the shot list's, yet a focal length that is up to 45 px off.</p>
+  </div>
+</section>
+
+<!-- ======================================================= 13 -->
+<section class="s" id="s13">
+  <div class="s-head"><span class="n">3.5</span><h3>Undistort an image</h3><span class="slide">Slide 11</span></div>
+  <div class="s-body">
+    <p>Now use the calibration. Undistortion bends curved lines back to straight, but this has a side effect: the corrected image no longer fills a rectangle neatly. You choose how to deal with that through <code>cv2.getOptimalNewCameraMatrix</code> and its <b>alpha</b> parameter:</p>
+    <ul>
+      <li><b>alpha = 0</b>: zoom in until every pixel is valid. No black borders, but you lose some of the field of view.</li>
+      <li><b>alpha = 1</b>: keep every pixel of the original. You see the whole field of view, with curved black borders around it.</li>
+    </ul>
+    <p>The function also returns <code>roi</code> (region of interest), the largest rectangle within the result that contains only valid pixels.</p>
+    <details class="fold"><summary><span class="k">Code · 1 part</span><span class="what">Step 7 · Undistort</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration.py · lines 114–128</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="114" data-hl="115,117,120,126"># Step 7: Use the calibration results to undistort an image
+img = cv2.imread(used_files[0])  # Replace with an image to undistort (same camera, same resolution)
+h, w = img.shape[:2]
+new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(camera_matrix, dist_coeffs, (w, h), 1, (w, h))
+
+# Undistort the image
+undistorted_img = cv2.undistort(img, camera_matrix, dist_coeffs, None, new_camera_matrix)
+
+
+# Crop the image (optional, based on ROI), unless the valid region is tiny (over-fitted distortion model)
+x, y, rw, rh = roi
+if rw * rh &gt;= 0.3 * w * h:
+    undistorted_img = undistorted_img[y:y+rh, x:x+rw]
+else:
+    print("WARNING: the valid region after undistortion is tiny - capture more views that reach the image corners")</code></pre></div></div>
+      <div class="w-note"><span class="lab">Step 7 · Undistort</span><p>The script undistorts the first photo it used (<code>calibration_image_02</code> for the samples). <code>getOptimalNewCameraMatrix</code> uses <b>alpha = 1</b> (the 4th argument); the 5th argument is the output size. <code>cv2.undistort</code> does the undistortion, and the result is cropped to the ROI, so the window shows only valid pixels at the alpha = 1 scale.</p><p>If the ROI covers less than 30% of the frame, the distortion model is over-fitted (<a class="sref" href="#s14">section 4.1</a>): the script then shows the uncropped image and warns you. The result is also saved as <code>undistorted_example.jpg</code>.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga7a6c4e032c97f03ba747966e6ad862b1" target="_blank" rel="noopener"><code>cv2.getOptimalNewCameraMatrix</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga69f2545a8b62a6b0fc2ee060dc30559d" target="_blank" rel="noopener"><code>cv2.undistort</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">based on: Camera Calibration › Undistortion</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/undistort.dispatch.cpp" target="_blank" rel="noopener">source: undistort.dispatch.cpp</a></p></div>
+    </div>
+    </details>
+
+    <div class="widget" id="und-widget">
+      <div class="w-top"><span>Before and after · calibration_image_02</span><span class="hint">Pick what the right-hand image shows</span></div>
+      <div class="w-body" style="grid-template-columns:1fr">
+        <div style="padding:12px 12px 0"><div class="seg" id="und-seg" role="group" aria-label="Undistortion variant">
+          <button data-v="a0" aria-pressed="false">alpha = 0</button>
+          <button data-v="a1" aria-pressed="false">alpha = 1</button>
+          <button data-v="a1roi" aria-pressed="false">alpha = 1 + ROI</button>
+          <button data-v="crop" aria-pressed="true">Cropped (script)</button>
+        </div></div>
+        <div class="pair" style="padding:12px;max-width:none">
+          <figure><div class="frame"><img src="img/sample_02.jpg" alt="Original photo" width="640" height="480"></div><figcaption><span>Original</span><span class="r">640 × 480</span></figcaption></figure>
+          <figure><div class="frame" style="background:#000;display:flex;align-items:center;justify-content:center;aspect-ratio:4/3"><img id="und-img" src="img/undistort_alpha1_cropped.jpg" alt="Undistorted photo" style="width:auto;max-width:100%;max-height:100%"></div><figcaption><span id="und-cap">Cropped to ROI</span><span class="r" id="und-size">636 × 475</span></figcaption></figure>
+        </div>
+      </div>
+      <div class="w-foot"><dl class="stats two" id="und-stats" style="border-top:0"></dl></div>
+    </div>
+    <p>With this webcam, the change is subtle: switch between the original and alpha = 0 and watch the edges of the board and the frame. With a wide-angle or fisheye lens it is dramatic (slide 2).</p>
+    <div class="call">
+      <span class="lab">A better test image</span>
+      <p>Undistorting one of the calibration photos is a quick check. A stronger test is a <em>new</em> photo, taken with the <b>same camera at the same resolution</b> (slide 11), of something with long straight lines near the edges of the frame, like a door frame, a bookshelf or window blinds. Save it next to the scripts as <code>test.jpg</code> (not in <code>calibration_images/</code>, or it will be used for calibration too) and change the <code>cv2.imread</code> line of step 7 to <code>img = cv2.imread(os.path.join(script_dir, 'test.jpg'))</code>.</p>
+    </div>
+  </div>
+</section>
+
+</section>
+
+<!-- ####################################################### part-4 -->
+<section class="part-s" id="part-4">
+  <div class="p-head"><span class="n">4</span><h2>Check your result</h2></div>
+
+<!-- ======================================================= 14 -->
+<section class="s" id="s14">
+  <div class="s-head"><span class="n">4.1</span><h3>Read your result</h3><span class="slide">Slide 13</span></div>
+  <div class="s-body">
+    <p>Compare your numbers with these two reference results: the one on slide 13 (labelled “a not very good one!”) and the six sample images in the repo. Both are <b>640 × 480</b> images. Your image size is printed in the line “Chessboard found in … images (W×H)”. If OpenCV opened your camera at 1280 × 720 or 1920 × 1080 (common on MacBooks), your f will be much larger and the principal point should be near (W/2, H/2), e.g. (640, 360).</p>
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Quantity</th><th class="num">Slide 13</th><th class="num">Sample images</th><th>Sanity check</th></tr></thead>
+      <tbody>
+        <tr><td>\(f_x\), \(f_y\) (px)</td><td class="num">557.57, 557.54</td><td class="num">552.90, 553.17</td><td>Nearly equal → square pixels ✓</td></tr>
+        <tr><td>\(c_x\), \(c_y\) (px)</td><td class="num">361.16, 226.58</td><td class="num">362.67, 230.86</td><td>Near the image centre (W/2, H/2) = (320, 240); webcams are often tens of pixels off ✓</td></tr>
+        <tr><td>\(k_1\)</td><td class="num">0.0238</td><td class="num">0.0365</td><td rowspan="3">Slide 13: k₂ and k₃ are large with opposite signs, a sign of over-fitting (check 3). The script keeps k₃ = 0</td></tr>
+        <tr><td>\(k_2\)</td><td class="num">0.0966</td><td class="num">−0.0225</td></tr>
+        <tr><td>\(k_3\)</td><td class="num">−0.3703</td><td class="num">0 (fixed)</td></tr>
+        <tr><td>\(p_1\), \(p_2\)</td><td class="num">−0.0031, −0.0017</td><td class="num">−0.0027, −0.0004</td><td>Tiny → lens well aligned ✓</td></tr>
+        <tr><td>Printed “total error”</td><td class="num">0.0739</td><td class="num">0.0611</td><td>Not the RMS (<a class="sref" href="#s12">section 3.4</a>)</td></tr>
+        <tr><td>RMS error (<code>ret</code>)</td><td class="num">not shown</td><td class="num">0.354 px</td><td>&lt; 0.5 px ✓</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h4>Four checks you can do yourself</h4>
+    <ol class="steps">
+      <li><div><p><b>Field of view.</b> From \(f_x\) and the image width \(W\), the horizontal field of view is \(\text{HFOV} = 2\arctan\!\big(\tfrac{W}{2 f_x}\big)\). For the samples, \(2\arctan(320/553) \approx 60^\circ\) horizontally and \(\approx 47^\circ\) vertically, typical for a laptop webcam. If you get 10° or 150°, something is wrong.</p></div></li>
+      <li><div><p><b>Distances.</b> The third component of each <code>tvec</code> is the depth of the board's first corner along the camera's viewing axis, roughly how far away the board was. In the samples it is 273–390 mm, which matches holding a board at arm's length. If your distances look wrong by a constant factor, check <code>square_size</code>.</p></div></li>
+      <li><div><p><b>Over-fitting.</b> Just like fitting a high-degree polynomial to points clustered in the middle, when too few photos reach the image corners, k₂ and k₃ can grow large with opposite signs and cancel each other out in the centre while oscillating wildly towards the edges — which is why the script sets <code>fix_k3 = True</code>. Try <code>fix_k3 = False</code> on the samples: the RMS error barely changes (0.354 → 0.351 px), but k₂ jumps to 0.32 and k₃ to −0.76, and the alpha = 1 ROI shrinks from 636 × 475 to 543 × 415, because the over-fitted polynomial bends back before it reaches the image corners. Slide 13's coefficients show the same signature. Judge a calibration by its RMS error <em>and</em> its undistorted picture, not by the individual coefficients.</p></div></li>
+      <li><div><p><b>Why “not very good”?</b> Slide 13's large, opposite-signed k₂ and k₃ (check 3) point to the usual causes: too few photos, and a board that never reaches the corners of the frame. The sample images have both (coverage plot in <a class="sref" href="#s08">section 2.3</a>). The distortion near the edges is then extrapolated rather than measured, even when the RMS error looks good. Taking more photos with the board near the edges fixes both issues.</p></div></li>
+    </ol>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga87955f4330d5c20e392b265b7f92f691" target="_blank" rel="noopener"><code>cv2.calibrationMatrixValues</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>cv2.calibrateCamera</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#details" target="_blank" rel="noopener">calib3d reference › radial distortion must be monotonic</a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 15 -->
+<section class="s" id="s15">
+  <div class="s-head"><span class="n">4.2</span><h3>Troubleshooting</h3></div>
+  <div class="s-body">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Message or symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td><code>Error: Unable to access camera 0</code></td><td>Wrong camera index, camera used by another app (Zoom, Teams), or no permission</td><td>Close other apps; try <code>python w3_calibration_cap.py 1</code>. On macOS, allow access for your terminal or VS Code under System Settings → Privacy &amp; Security → Camera, then restart it</td></tr>
+        <tr><td>Keys do nothing in the capture window</td><td>The OpenCV window doesn't have keyboard focus</td><td>Click on the video window, then press <kbd>c</kbd> / <kbd>q</kbd></td></tr>
+        <tr><td><kbd>c</kbd> prints <code>No chessboard detected</code></td><td>Board partly outside the frame, glare or blur, or <code>chessboard_size</code> doesn't match your board; or you are holding a ChArUco board without the <code>charuco</code> option</td><td>Keep the whole board in view; improve the lighting; count inner corners (<a class="sref" href="#s07">section 2.2</a>) and set the same <code>chessboard_size</code> in both scripts</td></tr>
+        <tr><td><code>No images found in …/calibration_images</code></td><td>Nothing captured yet, or the photos aren't <code>.jpg</code>, <code>.jpeg</code> or <code>.png</code></td><td>Capture first (<a class="sref" href="#s10">section 3.1</a>), or copy the sample images</td></tr>
+        <tr><td><code>No (4, 7) chessboard found in N images</code></td><td><code>chessboard_size</code> counts squares instead of inner corners, or the photos don't show the whole board</td><td>Count inner corners (<a class="sref" href="#s07">section 2.2</a>)</td></tr>
+        <tr><td><code>WARNING: fewer than 10 views</code></td><td>Too few usable photos for a reliable result</td><td>Capture more, following the checklist (<a class="sref" href="#s08">section 2.3</a>)</td></tr>
+        <tr><td><code>… size (W, H) differs from … - skipped</code></td><td>Photos from two cameras or resolutions in one folder</td><td>Empty <code>calibration_images/</code> and capture again with one camera</td></tr>
+        <tr><td><code>WARNING: the valid region after undistortion is tiny</code></td><td>The distortion model is over-fitted, usually because no photo reaches the image corners</td><td>Capture views with the board near the edges; keep <code>fix_k3 = True</code></td></tr>
+        <tr><td>RMS error above 1 px</td><td>Curled or warped board, motion blur, photos from different resolutions or cameras</td><td>Stiffen the board, retake blurry photos, keep one camera and resolution</td></tr>
+        <tr><td><code>cv2.error: … The function is not implemented</code> at <code>imshow</code></td><td>A headless OpenCV package is installed (alone or next to another OpenCV package); it has no GUI support</td><td>Remove every OpenCV package, then install one: <code>pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python opencv-contrib-python-headless</code>, then <code>pip install opencv-contrib-python</code>. They share one <code>cv2</code> folder, so removing only one can break the others</td></tr>
+        <tr><td>Option B: every photo says “not enough corners, skipped”</td><td>The settings at the top of the script don't match your print (squares, dictionary), the photos are blurry, or the markers are too small in the image</td><td>Check the board settings; move closer; hold still and use good light</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d8/dfe/classcv_1_1VideoCapture.html#aabce0d83aa0da9af802455e8cf5fd181" target="_blank" rel="noopener"><code>cv2.VideoCapture</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga93efa9b0aa890de240ca32b11253dd4a" target="_blank" rel="noopener"><code>cv2.findChessboardCorners</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/df5/classcv_1_1aruco_1_1CharucoDetector.html#aacbea601612a3a0feaa45ebb7fb255fd" target="_blank" rel="noopener"><code>CharucoDetector.detectBoard</code></a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 16 -->
+<section class="s" id="s16">
+  <div class="s-head"><span class="n">4.3</span><h3>Check yourself</h3></div>
+  <div class="s-body">
+    <details class="q"><summary><span class="n">Q1</span>Your board has 9 × 6 squares. What should <code>chessboard_size</code> be?</summary><div class="a"><p><code>(8, 5)</code> (or <code>(5, 8)</code>): one fewer than the number of squares in each direction, because OpenCV counts inner corners.</p></div></details>
+    <details class="q"><summary><span class="n">Q2</span>Which outputs of <code>calibrateCamera</code> describe the camera, and which describe each photo?</summary><div class="a"><p>Camera (intrinsic): <code>cameraMatrix</code> and <code>distCoeffs</code>. Each photo (extrinsic): <code>rvecs[i]</code> and <code>tvecs[i]</code>, the board's pose in photo i. <code>retval</code> is the RMS reprojection error.</p></div></details>
+    <details class="q"><summary><span class="n">Q3</span>You change <code>square_size</code> from 34.0 to 1.0. What changes in the output?</summary><div class="a"><p>Only <code>tvecs</code>, which become 34 times smaller (now measured in “squares” instead of millimetres). K, the distortion coefficients, the rotations and the error stay exactly the same. Scaling the whole world doesn't change how the image looks.</p></div></details>
+    <details class="q"><summary><span class="n">Q4</span>\(f_x = 550\) px for a 640-pixel-wide image. What is the horizontal field of view?</summary><div class="a"><p>\(2\arctan(320/550) \approx 60^\circ\).</p></div></details>
+    <details class="q"><summary><span class="n">Q5</span>Why do you need photos with the board near the corners of the image?</summary><div class="a"><p>Distortion grows with \(r^2, r^4, r^6\), so it is largest in the corners. Without corners detected there, the coefficients are only extrapolated from the centre, and the correction near the edges can be wrong even when the RMS error looks small.</p></div></details>
+    <details class="q"><summary><span class="n">Q6</span>You calibrated at 640 × 480. Can you use the same K for 1280 × 720 video from the same webcam?</summary><div class="a"><p>Not directly. K is in pixels, and 1280 × 720 is not just a 2× scale of 640 × 480: it has a different aspect ratio (16:9 vs 4:3), so the sensor is cropped differently. Calibrate at the resolution you will use.</p></div></details>
+    <details class="q"><summary><span class="n">Q7</span>What is the difference between alpha = 0 and alpha = 1 in <code>getOptimalNewCameraMatrix</code>?</summary><div class="a"><p>alpha = 0 zooms in so every output pixel is valid (no black border, less field of view). alpha = 1 keeps every input pixel (full field of view, black curved borders). Values in between blend the two.</p></div></details>
+    <details class="q"><summary><span class="n">Q8</span>After calibrating, a friend refocuses the webcam. Is your calibration still valid?</summary><div class="a"><p>No. Focus (and zoom) change the effective focal length and the distortion, so you need to recalibrate. That is why slide 9 says to lock these settings.</p></div></details>
+    <details class="q"><summary><span class="n">Q9</span>The script prints “total error: 0.061” and “RMS re-projection error: 0.3540 px”. Which one is the error of slide 10?</summary><div class="a"><p>The RMS line: it is <code>ret</code> from <code>calibrateCamera</code>, the slide-10 formula. “total error” divides by the number of corners outside the square root, which makes it at least √28 times smaller (<a class="sref" href="#s12">section 3.4</a>).</p></div></details>
+  </div>
+</section>
+
+</section>
+
+<!-- ####################################################### part-5 -->
+<section class="part-s" id="part-5">
+  <div class="p-head"><span class="n">5</span><h2>Going further</h2></div>
+
+<!-- ======================================================= 17 -->
+<section class="s" id="s17">
+  <div class="s-head"><span class="n">5.1</span><h3>Optional experiments</h3></div>
+  <div class="s-body">
+    <p>Try these optional experiments one at a time and watch how the printed RMS error changes.</p>
+
+    <h4>1 · The effect of sub-pixel refinement</h4>
+    <p>Put a <code>#</code> in front of the <code>cornerSubPix</code> line in step 3 and run the sample images again. The RMS error rises from <span class="num">0.354</span> to <span class="num">0.437 px</span>, and one corner of image 02 ends up 3 px off. (Option B needs no extra step: the ChArUco detector refines its corners itself.)</p>
+
+    <h4>2 · Leave k₃ free</h4>
+    <p>Set <code>fix_k3 = False</code> at the top of <code>w3_calibration.py</code>. On the sample images, the RMS error hardly changes, but the coefficients and the undistorted image change noticeably (<a class="sref" href="#s14">section 4.1</a>, check 3).</p>
+
+    <h4>3 · Save your coverage plot</h4>
+    <p>The green dots in the capture preview show where your corners are. To save the same plot as a picture for your report, add this just above <code># Step 4: Perform camera calibration</code>; it writes <code>coverage.png</code> next to the script:</p>
+    <details class="fold"><summary><span class="k">Code</span><span class="what">Add above # Step 4</span></summary>
+    <div class="code"><div class="cap"><span class="file">Add above # Step 4</span><button class="copy">Copy</button></div><pre><code class="language-python">coverage = np.full((image_size[1], image_size[0], 3), 255, np.uint8)
+for pts in imgpoints:
+    for u, v in pts.reshape(-1, 2):
+        cv2.circle(coverage, (int(u), int(v)), 3, (0, 0, 0), -1)
+cv2.imwrite(os.path.join(script_dir, 'coverage.png'), coverage)</code></pre></div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d7/d21/tutorial_interactive_calibration.html" target="_blank" rel="noopener">tutorial: Interactive camera calibration application › Calibration process</a></p>
+    </details>
+
+    <h4>4 · Reuse your calibration on live video</h4>
+    <p>Save this as <code>undistort_live.py</code> next to the scripts. It loads <code>calibration_data.npz</code>, or <code>calibration_data_charuco.npz</code> if you add <code>charuco</code>, and shows the camera undistorted next to the original. Give it the same camera index you captured with, e.g. <code>python undistort_live.py 1 charuco</code>. Press <kbd>q</kbd> to quit. It requires a display and a webcam that <code>VideoCapture</code> can open.</p>
+    <details class="fold"><summary><span class="k">Code</span><span class="what">undistort_live.py</span></summary>
+    <div class="code"><div class="cap"><span class="file">undistort_live.py</span><button class="copy">Copy</button></div><pre><code class="language-python">import os
+import sys
+import cv2
+import numpy as np
+
+# Same options as w3_calibration_cap.py: a camera index (e.g. 1), and "charuco" for the option-B result
+args = [a.lower() for a in sys.argv[1:]]
+camera_index = next((int(a) for a in args if a.isdigit()), 0)
+name = 'calibration_data_charuco.npz' if 'charuco' in args else 'calibration_data.npz'
+
+here = os.path.dirname(os.path.abspath(__file__))
+data = np.load(os.path.join(here, name))
+K, D = data['camera_matrix'], data['dist_coeffs']
+w, h = (int(v) for v in data['image_size'])
+new_K, roi = cv2.getOptimalNewCameraMatrix(K, D, (w, h), 0, (w, h))
+map1, map2 = cv2.initUndistortRectifyMap(K, D, None, new_K, (w, h), cv2.CV_16SC2)
+
+cap = cv2.VideoCapture(camera_index)
+failed_reads = 0
+while True:
+    ok, frame = cap.read()
+    if not ok:
+        failed_reads += 1
+        if failed_reads &lt; 10:  # a camera that is warming up can drop a few frames
+            continue
+        print(f"No picture from camera {camera_index}. Use the index you captured with, e.g. python undistort_live.py 1")
+        break
+    failed_reads = 0
+    if frame.shape[:2] != (h, w):
+        raise SystemExit(f"The camera gives {frame.shape[1]}x{frame.shape[0]}, but you calibrated at {w}x{h}.")
+    undistorted = cv2.remap(frame, map1, map2, cv2.INTER_LINEAR)
+    cv2.imshow('Original | Undistorted (alpha = 0)', np.hstack([frame, undistorted]))
+    if cv2.waitKey(1) &amp; 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()</code></pre></div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga7a6c4e032c97f03ba747966e6ad862b1" target="_blank" rel="noopener"><code>cv2.getOptimalNewCameraMatrix</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga7dfb72c9cf9780a347fbe3d1c47e5d5a" target="_blank" rel="noopener"><code>cv2.initUndistortRectifyMap</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/da/d54/group__imgproc__transform.html#gab75ef31ce5cdfb5c44b6da5f3b908ea4" target="_blank" rel="noopener"><code>cv2.remap</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">based on: Camera Calibration › 2. Using remapping</a></p>
+    </details>
+    <p class="muted" style="font-size:15px">This computes the undistortion maps once with <code>initUndistortRectifyMap</code> and applies them to every frame with <code>remap</code>. That gives the same result as <code>cv2.undistort</code>, but is much faster for video. It stops if the camera's resolution differs from the one you calibrated at, because K would not fit.</p>
+
+    <h4 id="stereo">5 · Looking ahead: stereo calibration</h4>
+    <p>Stereo calibration finds where a second camera sits relative to the first: the rotation <code>R</code> and translation <code>T</code> between them. You calibrate each camera on its own first, exactly as in this lab, then photograph the board with both cameras at the same time. <code>cv2.stereoCalibrate</code> needs the same corners in both images of a pair. With a chessboard (option A) that means the whole board in both views at once. With ChArUco (option B) you match corners by ID and use whichever ones both cameras saw:</p>
+    <p>The <a href="../../stereo/docs/index.html">stereo calibration lab</a> does all of this with two USB webcams: capture pairs, calibrate, rectify and measure depth. The sketch below shows the core idea.</p>
+    <details class="fold"><summary><span class="k">Code</span><span class="what">stereo_sketch.py</span></summary>
+    <div class="code"><div class="cap"><span class="file">stereo_sketch.py · next to w3_calibration_charuco.py</span><button class="copy">Copy</button></div><pre><code class="language-python">import cv2
+import numpy as np
+from w3_calibration_charuco import detect_board   # the option B detector
+
+
+def matched_points(gray_left, gray_right, min_common=6):
+    """Board points and pixels of the corners BOTH cameras saw, in the same order."""
+    obj_l, img_l, ids_l, _, _ = detect_board(gray_left)
+    obj_r, img_r, ids_r, _, _ = detect_board(gray_right)
+    if ids_l is None or ids_r is None:
+        return None
+    common = np.intersect1d(ids_l.ravel(), ids_r.ravel())
+    if len(common) &lt; min_common:
+        return None
+    pick_l = [np.flatnonzero(ids_l.ravel() == i)[0] for i in common]
+    pick_r = [np.flatnonzero(ids_r.ravel() == i)[0] for i in common]
+    return obj_l[pick_l], img_l[pick_l], img_r[pick_r]
+
+
+# K1, D1 and K2, D2: each camera calibrated on its own first (option B).
+# pairs: list of (gray_left, gray_right) photos taken at the same moment.
+obj, img_left, img_right = [], [], []
+for gray_left, gray_right in pairs:
+    m = matched_points(gray_left, gray_right)
+    if m is not None:
+        obj.append(m[0])
+        img_left.append(m[1])
+        img_right.append(m[2])
+
+rms, K1, D1, K2, D2, R, T, E, F = cv2.stereoCalibrate(
+    obj, img_left, img_right, K1, D1, K2, D2, image_size, flags=cv2.CALIB_FIX_INTRINSIC)
+print("stereo RMS (px):", rms, "  baseline (mm):", np.linalg.norm(T))</code></pre></div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga9d2539c1ebcda647487a616bdf0fc716" target="_blank" rel="noopener"><code>cv2.stereoCalibrate</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/df5/classcv_1_1aruco_1_1CharucoDetector.html#aacbea601612a3a0feaa45ebb7fb255fd" target="_blank" rel="noopener"><code>CharucoDetector.detectBoard</code></a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/cpp/stereo_calib.cpp" target="_blank" rel="noopener">sample: stereo_calib.cpp</a></p>
+    </details>
+    <p>In a simulated example with two 640 × 480 cameras 60 mm apart and 14 board poses (many near the edges of the frame), ChArUco yields usable pairs for all 14 poses, whereas both cameras see the whole board in only 3. <code>stereoCalibrate</code> recovers the baseline (the distance between the two cameras) as 60.2 mm, and after <code>cv2.stereoRectify</code> matching corners lie on the same image row to within 0.3 px.</p>
+  </div>
+</section>
+
+<!-- ======================================================= fisheye -->
+<section class="s" id="fisheye">
+  <div class="s-head"><span class="n">5.2</span><h3>Optional: a fisheye lens</h3></div>
+  <div class="s-body">
+    <p>For completeness only: the lab doesn't require this, and a standard webcam isn't a fisheye lens. Lenses wider than about 120° (action cameras, some robot and car cameras) bend straight lines so strongly that the model in <a class="sref" href="#s04">section 1.4</a> can only approximate them roughly. That model works with \(\tan\theta\), where \(\theta\) is a ray's angle from the optical axis, and \(\tan\theta\) grows without limit as \(\theta\) nears 90°. OpenCV's <code>cv2.fisheye</code> module uses a polynomial in the angle itself instead (the model of Kannala and Brandt):</p>
+    <div class="math">$$r = f\,\theta_d, \qquad \theta_d = \theta\,(1 + k_1\theta^2 + k_2\theta^4 + k_3\theta^6 + k_4\theta^8)$$</div>
+    <p>Here \(r\) is a point's distance from the principal point in pixels: the four coefficients \(k_1 \ldots k_4\) replace the five of the standard model.</p>
+    <p>To try it without a fisheye lens, use the 18 rendered photos in <code>sample_fisheye_images/</code>: a virtual 1280 × 800 camera with a horizontal field of view of about 137°, photographing the option B ChArUco board. Because the photos are rendered, the true values are known (<code>true_values.txt</code>). From the <code>w3_calibration</code> folder, calibrate with the fisheye model, then with the standard one:</p>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python w3_calibration_charuco.py sample_fisheye_images fisheye</code></pre></div>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python w3_calibration_charuco.py sample_fisheye_images</code></pre></div>
+    <table class="tbl" style="max-width:40rem">
+      <thead><tr><th></th><th>f<sub>x</sub> (px)</th><th>c<sub>x</sub> (px)</th><th>RMS error (px)</th></tr></thead>
+      <tbody>
+        <tr><td>True values</td><td class="num">520.0</td><td class="num">644.0</td><td class="num">–</td></tr>
+        <tr><td>Fisheye model</td><td class="num">520.1</td><td class="num">644.1</td><td class="num">0.03</td></tr>
+        <tr><td>Standard model</td><td class="num">539.4</td><td class="num">634.7</td><td class="num">0.88</td></tr>
+      </tbody>
+    </table>
+    <div class="pair">
+      <figure><div class="frame"><img src="img/fisheye_photo.jpg" alt="A rendered fisheye photo: the ChArUco board near the left edge, its straight edges strongly curved" width="640" height="400" loading="lazy"></div><figcaption><span>A rendered fisheye photo</span><span class="r">sample 07</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/fisheye_undistorted.jpg" alt="The same photo undistorted with the fisheye model: the board's edges are straight" width="640" height="400" loading="lazy"></div><figcaption><span>Undistorted with the fisheye model</span><span class="r">balance = 0</span></figcaption></figure>
+    </div>
+    <p>Runs on this folder save their results as <code>calibration_data_fisheye_sample_fisheye_images.npz</code> and <code>calibration_data_charuco_sample_fisheye_images.npz</code>, so they never replace your own calibration. A fisheye result needs the fisheye functions: <code>cv2.fisheye.undistortImage</code> or <code>cv2.fisheye.initUndistortRectifyMap</code>, not <code>cv2.undistort</code>. In the capture window (<a class="sref" href="#gui">section 3.2</a>), tick <b>Fisheye model</b> to see the running estimate with this model.</p>
+    <details class="fold"><summary><span class="k">Code · 2 parts</span><span class="what">Calibrating with the fisheye model<span class="sep">/</span>Undistorting a fisheye photo</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration_charuco.py · lines 69–86</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="69" data-hl="82">def calibrate_fisheye(objpoints, imgpoints, image_size):
+    """Optional: calibrate with OpenCV's fisheye model (cv2.fisheye) instead of the standard one.
+
+    A fisheye lens maps a ray at angle theta from the optical axis to the radius r = f * theta_d, with
+    theta_d = theta (1 + k1 theta^2 + k2 theta^4 + k3 theta^6 + k4 theta^8) (Kannala and Brandt, 2006).
+    The standard model works with tan(theta) instead, which grows without limit as theta nears 90 degrees.
+    Returns the same five values as cv2.calibrateCamera; D then holds k1..k4.
+    """
+    obj = [o.reshape(-1, 1, 3).astype(np.float64) for o in objpoints]  # cv2.fisheye wants N x 1 x 3 (refuses N x 3)
+    img = [i.reshape(-1, 1, 2).astype(np.float64) for i in imgpoints]
+    flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | cv2.fisheye.CALIB_FIX_SKEW
+    criteria = (cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS, 100, 1e-7)
+    try:
+        return cv2.fisheye.calibrate(obj, img, image_size, np.zeros((3, 3)), np.zeros((4, 1)),
+                                     flags=flags, criteria=criteria)
+    except cv2.error as error:
+        sys.exit(f"The fisheye calibration failed: {str(error).strip().splitlines()[-1]}\n"
+                 "Use more photos, with the board in every part of the image, and leave out very tilted views.")</code></pre></div></div>
+      <div class="w-note"><span class="lab">Calibrating with the fisheye model</span><p>This uses the same photos and corners as the standard calibration. <code>cv2.fisheye.calibrate</code> expects each photo's board points as an N × 1 × 3 array and its image points as N × 1 × 2; it refuses a flat N × 3 array, hence the reshapes. <code>CALIB_RECOMPUTE_EXTRINSIC</code> re-estimates the board poses after each step of the solver, and <code>CALIB_FIX_SKEW</code> holds the fisheye model's skew α at zero, so the pixel axes stay perpendicular, as the standard model's K assumes.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#gad626a78de2b1dae7489e152a5a5a89e1" target="_blank" rel="noopener"><code>cv2.fisheye.calibrate</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#details" target="_blank" rel="noopener">the fisheye model</a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">w3_calibration_charuco.py · lines 180–185</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="180" data-hl="181,185">    if FISHEYE:  # balance=0 zooms in until the whole output is image; 1 zooms out until each edge's middle is in view
+        new_camera_matrix = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+            camera_matrix, dist_coeffs, (w, h), np.eye(3), balance=0.0)
+        if not np.isfinite(new_camera_matrix).all() or new_camera_matrix[0, 0] &lt; 0.2 * camera_matrix[0, 0]:
+            new_camera_matrix = camera_matrix  # the photos don't reach the image edges, so the edges can't be undistorted
+        undistorted_img = cv2.fisheye.undistortImage(img, camera_matrix, dist_coeffs, Knew=new_camera_matrix)</code></pre></div></div>
+      <div class="w-note"><span class="lab">Undistorting a fisheye photo</span><p><code>balance</code> does a similar job to alpha in <a class="sref" href="#s13">section 3.5</a>: 0 zooms in until every output pixel contains valid image data; 1 zooms out until the midpoint of each image edge is in view, fitting the full 137° horizontal field of view. Even then the photo's corners (the 161° diagonal) are cut off and the centre shrinks (focal length about 250 px instead of about 420 px), so <code>balance=0</code> is the useful choice here.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#ga384940fdf04c03e362e94b6eb9b673c9" target="_blank" rel="noopener"><code>cv2.fisheye.estimateNewCameraMatrixForUndistortRectify</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#ga167df4b00a6fd55287ba829fbf9913b9" target="_blank" rel="noopener"><code>cv2.fisheye.undistortImage</code></a></p></div>
+    </div>
+    </details>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#details" target="_blank" rel="noopener">the fisheye camera model</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#gad626a78de2b1dae7489e152a5a5a89e1" target="_blank" rel="noopener"><code>cv2.fisheye.calibrate</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#ga0d37b45f780b32f63ed19c21aa9fd333" target="_blank" rel="noopener"><code>cv2.fisheye.initUndistortRectifyMap</code></a></p>
+  </div>
+</section>
+
+<!-- ======================================================= reading -->
+<section class="s" id="reading">
+  <div class="s-head"><span class="n">5.3</span><h3>Further reading and tools</h3></div>
+  <div class="s-body">
+    <h4>Reading</h4>
+    <ul>
+      <li>OpenCV, <a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">Camera Calibration</a> (Python tutorial) and the <a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html" target="_blank" rel="noopener">calib3d reference</a> for the full distortion model.</li>
+      <li>Z. Zhang, “A flexible new technique for camera calibration”, <i>IEEE TPAMI</i> 22(11), 2000: the method behind <code>calibrateCamera</code>.</li>
+    </ul>
+    <h4>Other tools worth knowing</h4>
+    <ul>
+      <li><a href="https://github.com/cvg/GeoCalib" target="_blank" rel="noopener">GeoCalib</a> (ECCV 2024) and <a href="https://github.com/javrtg/AnyCalib" target="_blank" rel="noopener">AnyCalib</a> (ICCV 2025) are neural networks that estimate focal length and distortion from a <em>single</em> photo, with no board. Try one on a webcam photo and compare its focal length with yours. They are quick, but not accurate enough to replace a board when you need accurate measurements.</li>
+      <li><a href="https://github.com/ros-perception/image_pipeline/tree/rolling/camera_calibration" target="_blank" rel="noopener">ROS 2 camera_calibration</a>: a GUI on top of OpenCV for one camera or a stereo pair, with chessboard or ChArUco boards.</li>
+      <li><a href="https://github.com/dkogan/mrcal" target="_blank" rel="noopener">mrcal</a>: a high-precision calibration tool that also reports how uncertain the result is across different parts of the image (Linux packages; Apple-silicon Macs via pip).</li>
+      <li><a href="https://github.com/ethz-asl/kalibr" target="_blank" rel="noopener">Kalibr</a> (ETH Zurich): the long-standing research tool for calibrating several cameras together, and cameras with an IMU, including the time offset between them, usually with an AprilGrid board. It runs on ROS 1, most easily in its Docker image, and has not been updated since early 2024.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ======================================================= credits -->
+<section class="s" id="credits">
+  <div class="s-head"><span class="n">5.4</span><h3>Sources and credits</h3></div>
+  <div class="s-body">
+<p>This tutorial draws on the sources below. Most sections also link to the OpenCV pages they draw on.</p>
+<ul>
+  <li><b>Lecture slides.</b> The page follows slides 1–13 of “Camera Intrinsic Calibration” by Luchen Li; where a section follows a slide, its heading gives the slide number.</li>
+  <li><b>Lab scripts and sample images.</b> The first versions of <code>w3_calibration.py</code> and <code>w3_calibration_cap.py</code>, and the six photos in <code>sample_calibration_images/</code>, came from Luchen Li. The scripts have since been extended, and <code>w3_calibration_charuco.py</code>, <code>w3_calibration_gui.py</code> and its helper <code>camera_names.py</code> were added.</li>
+  <li><b>COMP0219 calibration tutorial.</b> The printable chessboard PDF and the shot list in section <a class="sref" href="#s08">2.3</a> are adapted from it.</li>
+  <li><b>OpenCV tutorial <a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">Camera Calibration</a> (Python).</b> <code>w3_calibration.py</code> follows its code: the object points and the corner detection and refinement (Code, Setup), the <code>calibrateCamera</code> call (Calibration), undistorting and cropping to the ROI (Undistortion), and the loop that prints the “total error” (Re-projection Error; section <a class="sref" href="#s12">3.4</a> explains how the script's version differs). <code>undistort_live.py</code> in section <a class="sref" href="#s17">5.1</a> follows its “2. Using remapping” approach, and section <a class="sref" href="#s03">1.3</a> describes radial and tangential distortion following its Basics section.</li>
+  <li><b>OpenCV sample <a href="https://github.com/opencv/opencv/blob/4.x/samples/python/calibrate.py" target="_blank" rel="noopener">calibrate.py</a> and tutorial <a href="https://docs.opencv.org/4.x/df/d4a/tutorial_charuco_detection.html" target="_blank" rel="noopener">Detection of ChArUco Boards</a>.</b> The option-B detector in <code>w3_calibration_charuco.py</code> (section <a class="sref" href="#s11">3.3</a>) makes the same calls in the same order: <code>CharucoBoard</code>, <code>CharucoDetector</code>, <code>detectBoard</code>, then <code>matchImagePoints</code>. As in <code>calibrate.py</code>, the matched points then go into <code>calibrateCamera</code>.</li>
+  <li><b>OpenCV tutorial <a href="https://docs.opencv.org/4.x/d4/d94/tutorial_camera_calibration.html" target="_blank" rel="noopener">Camera calibration With OpenCV</a></b> (C++, original author Bernát Gábor). Its Theory section gives the five distortion coefficients in OpenCV's order (section <a class="sref" href="#s04">1.4</a>) and advises at least 10 good views (section <a class="sref" href="#s11">3.3</a>), and the capture script uses the same <code>findChessboardCorners</code> flags as its sample application (section <a class="sref" href="#s10">3.1</a>).</li>
+  <li><b>OpenCV tutorials <a href="https://docs.opencv.org/4.x/da/d0d/tutorial_camera_calibration_pattern.html" target="_blank" rel="noopener">Create Calibration Pattern</a></b> (Laurent Berger, Alexander Panov and Alexander Smorkalov) <b>and <a href="https://docs.opencv.org/4.x/d7/d21/tutorial_interactive_calibration.html" target="_blank" rel="noopener">Interactive camera calibration application</a></b> (original author Vladislav Sovrasov). Their advice (a flat, matte board with its white border in view, views that cover the whole image, no steep angles) is part of the guidance in sections <a class="sref" href="#s07">2.2</a>–<a class="sref" href="#s08">2.3</a>.</li>
+  <li><b>OpenCV <a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#details" target="_blank" rel="noopener">calib3d reference</a>.</b> The distortion formula and projection steps of sections <a class="sref" href="#s04">1.4</a>–<a class="sref" href="#s05">1.5</a> are the five-coefficient form of the camera model given there.</li>
+  <li><b>References in the OpenCV documentation.</b> The <a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>calibrateCamera</code> documentation</a> cites Z. Zhang, “A flexible new technique for camera calibration”, <i>IEEE TPAMI</i> 22(11):1330–1334, 2000, and J.-Y. Bouguet, <i>Camera Calibration Toolbox for MATLAB</i>, 2004.</li>
+  <li><b>calib.io.</b> The 5 × 8-square chessboard the scripts are set up for is a calib.io board; calib.io also has an online <a href="https://calib.io/pages/camera-calibration-pattern-generator" target="_blank" rel="noopener">pattern generator</a>.</li>
+  <li><b>OpenCV <a href="https://docs.opencv.org/4.x/d7/d21/tutorial_interactive_calibration.html" target="_blank" rel="noopener">interactive camera calibration application</a></b> (original author Vladislav Sovrasov; source in <a href="https://github.com/opencv/opencv/blob/4.x/apps/interactive-calibration/main.cpp" target="_blank" rel="noopener">apps/interactive-calibration</a>). The capture window of section <a class="sref" href="#gui">3.2</a> follows it: automatically saving when the board is held still, the running focal length and RMS error, the undistorted live view, and the green board-position overlay, drawn in the same way as its <code>drawBoard</code> function (the red shading for uncovered areas is this tutorial's addition).</li>
+  <li><b>OpenCV <a href="https://docs.opencv.org/4.x/db/d58/group__calib3d__fisheye.html#details" target="_blank" rel="noopener">fisheye camera model</a></b> and the paper it cites: J. Kannala and S. Brandt, “A generic camera model and calibration method for conventional, wide-angle, and fish-eye lenses”, <i>IEEE TPAMI</i> 28:1335–1340, 2006 (section <a class="sref" href="#fisheye">5.2</a>). The fisheye sample photos are rendered for this tutorial.</li>
+  <li><b>Licence.</b> OpenCV is open source, released under the <a href="https://github.com/opencv/opencv/blob/4.x/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a>.</li>
+</ul>
+  </div>
+</section>
+
+</section>
+
+</main>
+
+<footer class="foot">
+  <span>COMP0241 · Intrinsic calibration lab · Based on the slides “Camera Intrinsic Calibration” by Luchen Li · Chessboard PDF and shot list adapted from the COMP0219 calibration tutorial</span>
+  <span>Example outputs are from OpenCV 4.12; other versions can give slightly different numbers</span>
+</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="sample-data.js?v=7"></script>
+<script src="tutorial.js?v=8"></script>
+</body>
+</html>

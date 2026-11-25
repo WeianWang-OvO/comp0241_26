@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stereo Calibration · COMP0241 Lab</title>
+<meta name="description" content="Step-by-step tutorial: calibrate a pair of USB webcams as a stereo camera with OpenCV, rectify the images and measure depth from disparity.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23fff'/%3E%3Cpath d='M0 0h4v4H0zM8 0h4v4H8zM4 4h4v4H4zM12 4h4v4h-4zM0 8h4v4H0zM8 8h4v4H8zM4 12h4v4H4zM12 12h4v4h-4z'/%3E%3Ccircle cx='8' cy='8' r='1.6' fill='%23e30613'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<link rel="stylesheet" href="site.css?v=8">
+<style>
+  .dz-lab { font: 500 12px/1 'IBM Plex Mono', monospace; fill: #000; }
+  .dz-lab.red { fill: #e30613; }
+  .dz-lab.muted { fill: #777; }
+  .dz-tick { font: 500 11px/1 'IBM Plex Mono', monospace; fill: #555; }
+  #dz-plot { border-top: 2px solid #000; }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <span class="tag">COMP0241 / Stereo lab</span>
+  <span class="title">Stereo calibration of two webcams with OpenCV</span>
+  <nav class="nav"><a href="../../index.html">All labs</a><a href="#s05">Start the lab</a></nav>
+  <span class="progress" id="progress"></span>
+</header>
+
+<div class="page">
+
+<nav class="toc" aria-label="Contents">
+  <div class="cap">Contents</div>
+  <ol class="toc-parts">
+    <li><a class="p" href="#part-1"><span class="n">1</span>Theory</a>
+      <ol>
+        <li><a href="#s01"><span class="n">1.1</span>What stereo calibration finds</a></li>
+        <li><a href="#s02"><span class="n">1.2</span>Depth from disparity</a></li>
+        <li><a href="#s03"><span class="n">1.3</span>Epipolar lines and rectification</a></li>
+      </ol>
+    </li>
+    <li><a class="p" href="#part-2"><span class="n">2</span>Prepare</a>
+      <ol>
+        <li><a href="#s04"><span class="n">2.1</span>What you need</a></li>
+        <li><a href="#s05"><span class="n">2.2</span>Set up</a></li>
+      </ol>
+    </li>
+    <li><a class="p" href="#part-3"><span class="n">3</span>Capture and calibrate</a>
+      <ol>
+        <li><a href="#s06"><span class="n">3.1</span>Capture pairs</a></li>
+        <li><a href="#s07"><span class="n">3.2</span>Run the calibration</a></li>
+      </ol>
+    </li>
+    <li><a class="p" href="#part-4"><span class="n">4</span>Check and measure</a>
+      <ol>
+        <li><a href="#s08"><span class="n">4.1</span>Read your result</a></li>
+        <li><a href="#s09"><span class="n">4.2</span>See depth</a></li>
+        <li><a href="#s10"><span class="n">4.3</span>Troubleshooting</a></li>
+        <li><a href="#s11"><span class="n">4.4</span>Check yourself</a></li>
+      </ol>
+    </li>
+    <li><a class="p" href="#part-5"><span class="n">5</span>Going further</a>
+      <ol>
+        <li><a href="#s12"><span class="n">5.1</span>Ideas to try</a></li>
+        <li><a href="#credits"><span class="n">5.2</span>Sources and credits</a></li>
+      </ol>
+    </li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- ======================================================= HERO -->
+<div class="hero">
+  <div class="kicker">COMP0241 · Lab tutorial · Follows intrinsic calibration</div>
+  <h1>Stereo <em>calibration</em></h1>
+  <p class="lede">Two webcams side by side see the world from two viewpoints, like your eyes. Calibrate the pair and OpenCV tells you exactly where one camera sits relative to the other. Then every point both cameras see has a distance you can measure.</p>
+  <dl class="facts">
+    <div><dt>You need</dt><dd>Two USB webcams (ideally the same model) fixed side by side and the printed ChArUco board from the intrinsic calibration lab</dd></div>
+    <div><dt>Code</dt><dd><code>calibration_tutorial/stereo/</code>: capture pairs (keys or a GUI), calibrate, see depth</dd></div>
+    <div><dt>You get</dt><dd>R and T between the cameras, the baseline in mm, rectified images and a depth map</dd></div>
+    <div><dt>Before this</dt><dd><a href="../../intrinsic/docs/index.html">Camera intrinsic calibration</a>, option B (ChArUco)</dd></div>
+  </dl>
+</div>
+
+<!-- ####################################################### part-1 -->
+<section class="part-s" id="part-1">
+  <div class="p-head"><span class="n">1</span><h2>Theory</h2></div>
+
+<!-- ======================================================= 01 -->
+<section class="s" id="s01">
+  <div class="s-head"><span class="n">1.1</span><h3>What stereo calibration finds</h3></div>
+  <div class="s-body">
+    <p>In the intrinsic calibration lab, you found the <b>intrinsic</b> parameters of one camera: its camera matrix \(K\) and distortion coefficients. A stereo pair needs those for <em>both</em> cameras, plus one more thing: <b>where the right camera is, relative to the left one</b>. That is a rotation \(R\) and a translation \(T\), the <b>extrinsic</b> parameters of the pair.</p>
+    <div class="math">
+      <div class="cap">From left-camera coordinates to right-camera coordinates (OpenCV's convention)</div>
+      $$X_\text{right} = R\,X_\text{left} + T$$
+    </div>
+    <p>\(X_\text{left}\) is a 3D point in the left camera's coordinate system (x right, y down, z forward, in millimetres here because the board is measured in millimetres). For two cameras side by side, \(R\) is close to the identity matrix and \(T \approx (-B, 0, 0)\). The length \(B = \lVert T \rVert\) is the <b>baseline</b>: the distance between the two optical centres. You can check it with a ruler.</p>
+    <p>Why the minus sign? A point straight in front of the left camera is to the <em>left</em> of the right camera, so its x coordinate is smaller (more negative) in the right camera's coordinates.</p>
+    <div class="call">
+      <span class="lab">The plan</span>
+      <ol>
+        <li>Photograph the ChArUco board with both cameras at the same time, about 20 times (a <b>pair</b> each time).</li>
+        <li>Calibrate each camera on its own, exactly as in the intrinsic calibration lab.</li>
+        <li>Keep those intrinsics fixed and find \(R\) and \(T\) from the corners that both cameras saw: <code>cv2.stereoCalibrate</code>.</li>
+        <li>Compute how to warp both images so that they look like a perfectly aligned side-by-side pair (rectification): <code>cv2.stereoRectify</code>.</li>
+        <li>Match pixels along image rows and convert their horizontal shift (disparity) into distance: <code>cv2.StereoSGBM</code>.</li>
+      </ol>
+    </div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#details" target="_blank" rel="noopener">calib3d reference › pinhole camera model</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga9d2539c1ebcda647487a616bdf0fc716" target="_blank" rel="noopener"><code>cv2.stereoCalibrate</code></a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/cpp/stereo_calib.cpp" target="_blank" rel="noopener">sample: stereo_calib.cpp</a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 02 -->
+<section class="s" id="s02">
+  <div class="s-head"><span class="n">1.2</span><h3>Depth from disparity</h3></div>
+  <div class="s-body">
+    <p>Imagine the ideal pair: two identical cameras, side by side, looking in exactly the same direction, with their image rows lined up. A point at distance \(Z\) appears in both images on the <em>same row</em>, but at different columns \(x_\text{left}\) and \(x_\text{right}\). The difference is the <b>disparity</b> \(d\). Similar triangles give its distance:</p>
+    <div class="math">
+      <div class="cap">Distance from disparity (rectified pair)</div>
+      $$d = x_\text{left} - x_\text{right} = \frac{f\,B}{Z} \qquad\Longleftrightarrow\qquad Z = \frac{f\,B}{d}$$
+    </div>
+    <p>\(f\) is the focal length in pixels and \(B\) the baseline. For a calibrated pair, \(f\) is the focal length of the <em>rectified</em> images, <code>P1[0, 0]</code> (<a class="sref" href="#s03">section 1.3</a>): a little larger than \(f_x\) in \(K\), because rectification zooms in to hide black borders (637 px compared with 601 px for the sample pairs). Near points have a large disparity, far points a small one, and a point at infinity has \(d = 0\). Because \(Z\) depends on \(1/d\), a small error in \(d\) causes a rapidly growing error in \(Z\) (from differentiating \(Z = fB/d\)):</p>
+    <div class="math">
+      <div class="cap">Depth error for a matching error \(\Delta d\)</div>
+      $$\Delta Z \approx \frac{Z^2}{f\,B}\,\Delta d$$
+    </div>
+    <p>Twice as far away means <b>four times</b> the depth error. A longer baseline or a longer focal length helps, at the price of less overlap between the two views close up. Try it:</p>
+
+    <div class="widget" id="dz-widget">
+      <div class="w-top"><span>Depth from disparity</span><span class="hint">Move the sliders · the curve is the depth error at every distance</span></div>
+      <div class="w-body">
+        <div class="w-stage">
+          <svg id="dz-svg" viewBox="0 0 520 310" role="img" aria-label="Two cameras seen from above, separated by the baseline, with the rays from a point at distance Z to each camera."></svg>
+          <svg id="dz-plot" viewBox="0 0 520 180" role="img" aria-label="Depth error against distance for the chosen baseline, focal length and matching error."></svg>
+        </div>
+        <div class="w-side">
+          <div class="seg" role="group" aria-label="Presets"><button id="dz-sample" aria-pressed="false">Sample pairs: B 80 mm, f 637 px</button></div>
+          <div class="sl"><label for="dz-B">Baseline B</label><span class="val" id="dz-Bv"></span><input type="range" id="dz-B" min="40" max="200" step="5" value="80"></div>
+          <div class="sl"><label for="dz-f">Focal length f</label><span class="val" id="dz-fv"></span><input type="range" id="dz-f" min="300" max="1400" step="1" value="600"></div>
+          <div class="sl"><label for="dz-Z">Distance Z</label><span class="val" id="dz-Zv"></span><input type="range" id="dz-Z" min="200" max="3000" step="10" value="1000"></div>
+          <div class="sl hot"><label for="dz-e">Matching error Δd</label><span class="val" id="dz-ev"></span><input type="range" id="dz-e" min="0.1" max="2" step="0.05" value="0.25"></div>
+          <dl class="stats" id="dz-stats"></dl>
+        </div>
+      </div>
+      <div class="w-foot muted">A 640 × 480 webcam has \(f \approx 600\) px, a little more after rectification (637 px for the sample pairs). Good block matching finds disparities to about a quarter of a pixel on textured surfaces, but struggles on plain walls. The last row is the disparity range the matcher must search to reach this distance (<a class="sref" href="#s09">section 4.2</a>).</div>
+    </div>
+    <p>Real cameras are never that ideal pair: they are turned slightly towards or away from each other, one sits a little higher, and both have lens distortion. Calibration measures all of that so that it can be undone.</p>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/dd/d53/tutorial_py_depthmap.html" target="_blank" rel="noopener">based on: Depth Map from Stereo Images › Basics</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6" target="_blank" rel="noopener"><code>cv2.stereoRectify</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga1bc1152bd57d63bc524204f21fde6e02" target="_blank" rel="noopener"><code>cv2.reprojectImageTo3D</code></a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 03 -->
+<section class="s" id="s03">
+  <div class="s-head"><span class="n">1.3</span><h3>Epipolar lines and rectification</h3></div>
+  <div class="s-body">
+    <p>Take a pixel in the left image. The 3D point it shows lies somewhere on a ray from the left camera. Seen from the right camera, that ray is a line: the <b>epipolar line</b>. The matching pixel must be on it. So finding matches is a 1D search along a line, not a 2D search over the whole image.</p>
+    <p>The <b>essential matrix</b> \(E\) (in normalised camera coordinates) and the <b>fundamental matrix</b> \(F\) (in pixel coordinates) encode this geometry. <code>cv2.stereoCalibrate</code> returns both, but you rarely need them directly:</p>
+    <div class="math">
+      $$E = [T]_\times R, \qquad F = K_\text{right}^{-\top} E\, K_\text{left}^{-1}, \qquad \tilde{x}_\text{right}^{\top} F\, \tilde{x}_\text{left} = 0$$
+    </div>
+    <p>\(\tilde{x} = (u, v, 1)^\top\) are homogeneous pixel coordinates (after undistortion), and \([T]_\times\) is the skew-symmetric matrix representing the cross product with \(T\).</p>
+    <p><b>Rectification</b> turns both cameras virtually, by small rotations \(R_1\) and \(R_2\), so that both look in the same direction and every epipolar line becomes an image row. It also gives both images the same new camera matrix. After rectification, the pair is the ideal pair of <a class="sref" href="#s02">section 1.2</a>, and matching is a search along one row.</p>
+    <div class="pair">
+      <figure><div class="frame"><img src="img/rows_raw.jpg" alt="A real pair from two webcams before rectification: four matching board corners are joined by horizontal lines; each line passes through the corner in the left image but misses it in the right image by 3 to 6 pixels" width="1280" height="480" loading="lazy"></div><figcaption><span>Before: same corner, rows differ by 3.3–5.7 px</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/rows_rectified.jpg" alt="The same pair after rectification: each horizontal line passes through the same corner in both images" width="1280" height="480" loading="lazy"></div><figcaption><span>After: rows differ by 0.1–1.1 px</span></figcaption></figure>
+    </div>
+    <p class="muted" style="font-size:14px">Both photos: a real pair from two Arducam OV9782 webcams 142 mm apart, the board on a desk about 38 cm away.</p>
+    <p><code>cv2.stereoRectify</code> returns everything needed:</p>
+    <table class="tbl" style="max-width:48rem">
+      <thead><tr><th>Output</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>R1</code>, <code>R2</code></td><td>Rotation that turns each camera into the rectified orientation</td></tr>
+        <tr><td><code>P1</code>, <code>P2</code></td><td>3 × 4 projection matrices of the rectified cameras: the same focal length \(f\) and principal point; <code>P2[0, 3]</code> \(= -f B\)</td></tr>
+        <tr><td><code>Q</code></td><td>4 × 4 matrix that turns a pixel and its disparity \((x, y, d)\) into a 3D point; the same as \(Z = fB/d\)</td></tr>
+        <tr><td><code>roi1</code>, <code>roi2</code></td><td>The region of interest (rectangle of valid pixels) in each rectified image</td></tr>
+      </tbody>
+    </table>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/da/de9/tutorial_py_epipolar_geometry.html" target="_blank" rel="noopener">based on: Epipolar Geometry › Basic Concepts</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga9d2539c1ebcda647487a616bdf0fc716" target="_blank" rel="noopener"><code>cv2.stereoCalibrate</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6" target="_blank" rel="noopener"><code>cv2.stereoRectify</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga7dfb72c9cf9780a347fbe3d1c47e5d5a" target="_blank" rel="noopener"><code>cv2.initUndistortRectifyMap</code></a></p>
+  </div>
+</section>
+
+</section>
+
+<!-- ####################################################### part-2 -->
+<section class="part-s" id="part-2">
+  <div class="p-head"><span class="n">2</span><h2>Prepare</h2></div>
+
+<!-- ======================================================= 04 -->
+<section class="s" id="s04">
+  <div class="s-head"><span class="n">2.1</span><h3>What you need</h3></div>
+  <div class="s-body">
+    <ul>
+      <li><b>Two USB webcams</b>, ideally the same model, so both give the same image size and similar images. Plug them into <b>two different USB ports</b>: two webcams sharing one USB hub often cannot stream simultaneously (due to USB bandwidth limits).</li>
+      <li><b>A rigid mount.</b> Fix the two cameras side by side, 6–12 cm apart, pointing the same way: tape or screw them to a ruler or a strip of wood. <b>Once calibrated, they must not move relative to each other</b>: if one is knocked, calibrate again.</li>
+      <li><b>The ChArUco board</b> from the intrinsic calibration lab: print <a href="../../intrinsic/docs/charuco_board_A4.pdf" download>charuco_board_A4.pdf</a> at 100% (“Actual size”), check that its scale bar measures 100 mm, and fix it to something flat and stiff. ChArUco suits stereo because every corner has an ID: a corner counts as soon as both cameras see it, even when the board is partly out of one camera's view. The intrinsic lab's chessboard works too (the <b>Calibration: chessboard</b> mode of the capture GUI, or <code>python stereo_cap.py 0 1 chessboard</code>), but a pair counts only when the whole board is in both photos: of the 18 rendered test views, 8 qualify with the chessboard and all 18 with ChArUco.</li>
+      <li><b>Fixed focus.</b> Autofocus changes the focal length. If your webcams autofocus, switch it off in the camera's own software if you can, and keep the board at the distance you will use.</li>
+    </ul>
+    <div class="call">
+      <span class="lab">How far can the board be?</span>
+      <p>At 640 × 480, the A4 board's markers are 15 mm wide. They have to be about 15 pixels wide in the image to be read, so keep the board within about 50–60 cm, closer when it is tilted. For a rig that looks further away, print the board larger (A3) and change <code>SQUARE_LENGTH</code> and <code>MARKER_LENGTH</code> at the top of <code>../intrinsic/w3_calibration_charuco.py</code> to your measured sizes.</p>
+    </div>
+    <div class="call">
+      <span class="lab">How far apart should the cameras be?</span>
+      <p>It depends on how close you want to measure. The disparity of the nearest point, \(fB/Z_\text{min}\), should stay below about a quarter of the image width, or the matcher has to search a large part of every row (<a class="sref" href="#s09">section 4.2</a>). With 640-pixel-wide images (\(f \approx\) 550–600 px), that gives about <b>8 cm for objects 30 cm away</b> and 13 cm at 50 cm. Further apart gives better depth far away (<a class="sref" href="#s02">section 1.2</a>), but less overlap close up.</p>
+      <p>A real example: two Arducam OV9782 webcams 14 cm apart, looking at a desk 30–40 cm below. They calibrated well (stereo RMS 0.54 px), but points on the desk shifted by more than 250 px between the two images, 40% of the image width, and the outer third of each image never saw the board in both cameras at once.</p>
+    </div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/da/d0d/tutorial_camera_calibration_pattern.html" target="_blank" rel="noopener">tutorial: Create Calibration Pattern › Pattern Types, Pattern Size</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d0/d3c/classcv_1_1aruco_1_1CharucoBoard.html#a6cbc67e2253bb47d1a0f942f9db9efde" target="_blank" rel="noopener"><code>cv2.aruco.CharucoBoard</code></a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 05 -->
+<section class="s" id="s05">
+  <div class="s-head"><span class="n">2.2</span><h3>Set up</h3></div>
+  <div class="s-body">
+    <ol class="steps">
+      <li><div>
+        <p><b>Use the same environment as for intrinsic calibration.</b> The stereo scripts use the same OpenCV and need version 4.7 or newer (OpenCV 5 works too):</p>
+        <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">conda activate comp0241
+python -c "import cv2; print(cv2.__version__)"</code></pre></div>
+      </div></li>
+      <li><div>
+        <p><b>Get the code.</b> The scripts are in the <code>calibration_tutorial/stereo/</code> folder of the course repository, next to the <code>calibration_tutorial/intrinsic/</code> folder whose ChArUco settings they share. If you cloned the repository for the intrinsic lab, pull the latest version; otherwise clone it:</p>
+        <div class="code"><div class="cap"><span class="file">Terminal · first time</span><button class="copy">Copy</button></div><pre><code class="language-bash">git clone https://github.com/WeianWang-OvO/comp0241_26.git
+cd comp0241_26/calibration_tutorial/stereo</code></pre></div>
+        <div class="code"><div class="cap"><span class="file">Terminal · already cloned</span><button class="copy">Copy</button></div><pre><code class="language-bash">cd comp0241_26
+git pull
+cd calibration_tutorial/stereo</code></pre></div>
+        <div class="code out"><div class="cap"><span class="file">comp0241_26/calibration_tutorial/</span></div><pre><code class="language-plaintext">calibration_tutorial/
+├── intrinsic/
+│   └── w3_calibration_charuco.py    the ChArUco board settings and detector (intrinsic lab, option B)
+└── stereo/
+    ├── stereo_cap.py                 capture pairs from two webcams (keys)
+    ├── stereo_capture_gui.py         the same with buttons, Undo and Auto save
+    ├── stereo_calibration.py         calibrate the pair, check it, save stereo_calibration.npz
+    ├── stereo_depth.py               rectified views and a depth map, live or from one pair
+    ├── camera_names.py               the cameras' names (macOS and Linux), used by the four above
+    ├── docs/                         this tutorial page (open docs/index.html in a browser)
+    ├── sample_pairs/                 18 rendered pairs (left/, right/) with their true values
+    └── stereo_pairs/                 created when you capture: left/, right/, cameras.txt, and the
+                                      calibration (stereo_calibration.npz) once you run it</code></pre></div>
+      </div></li>
+      <li><div>
+        <p><b>Find your cameras.</b> Each camera has an index (0, 1, 2…), and a laptop's own camera usually takes 0. This saves one photo from each index, so you can see which is which:</p>
+        <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python stereo_cap.py list</code></pre></div>
+        <div class="code out"><div class="cap"><span class="file">Output · example on a Mac: two webcams (0 and 1) and the laptop camera (2)</span></div><pre><code class="language-plaintext">camera 0 Arducam OV9782 USB Camera (USB 21200000): 640x480, photo saved as camera_list/camera_0.jpg
+camera 1 Arducam OV9782 USB Camera (USB 21300000): 640x480, photo saved as camera_list/camera_1.jpg
+camera 2 FaceTime HD Camera: 640x480, photo saved as camera_list/camera_2.jpg
+camera 3: no camera
+camera 4: no camera
+camera 5: no camera</code></pre></div>
+        <p>Open the photos in <code>camera_list/</code> to find the indices of your two webcams. On macOS and Linux, the list also shows each camera's name and USB port. Two identical webcams give almost the same photo, so check which is left in the capture window (<a class="sref" href="#s06">section 3.1</a>): stand behind the cameras, looking where they look, and hold your hand in front of the camera on your <b>left</b>. It must appear in the left half of the window; if not, swap the order of the two indices (in the GUI, press <b>Swap left/right</b>). If you still mix them up, the calibration tells you (<a class="sref" href="#s08">section 4.1</a>).</p>
+      </div></li>
+    </ol>
+    <div class="call">
+      <span class="lab">No webcams yet?</span>
+      <p>Skip to <a class="sref" href="#s07">section 3.2</a> and run everything on <code>sample_pairs/</code>. These pairs are <b>rendered</b>: two virtual webcams 80 mm apart look at the board in front of a textured wall. Because they are rendered, <code>sample_pairs/true_values.txt</code> holds the true answer, so you can see how close the calibration gets.</p>
+    </div>
+  </div>
+</section>
+
+</section>
+
+<!-- ####################################################### part-3 -->
+<section class="part-s" id="part-3">
+  <div class="p-head"><span class="n">3</span><h2>Capture and calibrate</h2></div>
+
+<!-- ======================================================= 06 -->
+<section class="s" id="s06">
+  <div class="s-head"><span class="n">3.1</span><h3>Capture pairs</h3></div>
+  <div class="s-body">
+    <div class="code"><div class="cap"><span class="file">Terminal · left index first</span><button class="copy">Copy</button></div><pre><code class="language-bash">python stereo_cap.py 0 1</code></pre></div>
+    <div class="call">
+      <span class="lab">Prefer buttons? Use the capture GUI</span>
+      <p><code>python stereo_capture_gui.py</code> opens a window where you pick the two cameras by name (on macOS and Linux, with their USB port, so you can tell two identical webcams apart), the image size and the folder, then press <b>Start</b>. <b>Scan</b> checks which cameras produce images. After <b>Start</b> it asks you to check which camera is which: stand behind the cameras and hold your hand in front of the left one. If the LEFT image goes dark, press <b>Confirm left/right</b>; if the RIGHT one does, press <b>Swap left/right</b>. Nothing is saved before that, and with the board in view the window warns when the cameras look swapped. <b>Save pair</b> (or <kbd>Space</kbd>) saves, and <b>Undo</b> (<kbd>U</kbd>) removes the last pair. Pick your board with <b>Calibration: ChArUco board</b> or <b>Calibration: chessboard</b>. <b>Wait until the board is still</b> is on by default; untick it to save without the still check (<code>stereo_cap.py</code>: add <code>nostill</code>), and then hold the board steady yourself, because the two cameras don't take their photos at the exact same time.</p>
+      <p>Turn on <b>Auto save</b> and it saves automatically whenever the board has been held still for a moment in a new position, so you can hold the board with both hands. In <b>Scene</b> mode it saves any pair, every few seconds with Auto save, for your own stereo dataset. It writes the same <code>left/</code> and <code>right/</code> folders as <code>stereo_cap.py</code>.</p>
+    </div>
+    <p>With <code>stereo_cap.py</code>, a window shows both cameras side by side. Click it, then press <kbd>c</kbd> to save a pair and <kbd>q</kbd> or <kbd>Esc</kbd> to quit. Corners each camera sees are drawn in red, and the corners of pairs you already saved as green dots, so you can see which parts of each image still need the board.</p>
+    <figure class="fig" style="max-width:60rem"><div class="frame"><img src="img/capture_preview.jpg" alt="Capture window with two real webcam images side by side, the board on a desk, red dots on the board corners, green dots on the corners of the pair already saved, and the status line saved 1/20, 24 shared corners, ready" width="1280" height="480" loading="lazy"></div><figcaption><span>The capture window with two Arducam webcams: “ready” means both cameras see the board and it is still</span></figcaption></figure>
+    <div class="code out"><div class="cap"><span class="file">Output · a short session with the two Arducam webcams</span></div><pre><code class="language-plaintext">Capturing at 640x480. Use the calibration only at this resolution.
+Pair saved: stereo_pairs/left/pair_00.jpg and right/pair_00.jpg  (1/20, 24 shared corners)
+The board is moving: hold it still for half a second (or rest it on something) and press c again.
+Pair saved: stereo_pairs/left/pair_01.jpg and right/pair_01.jpg  (2/20, 24 shared corners)
+Exiting...</code></pre></div>
+    <div class="call">
+      <span class="lab">Hold the board still</span>
+      <p>Two USB webcams are <b>not synchronised</b>: each captures frames on its own internal clock, and on Windows and Linux one camera's frames can lag the other's by a few frame times. If the board moves in between, the pair shows it in two different places, and the calibration learns the wrong baseline. So rest the board on something, or hold it very still. Both tools save a pair only after the board has been still for <b>half a second</b>: its corners moved less than 1.5 px from one frame to the next (the median over the corners, so one jittery corner doesn't count), and drifted less than 3 px in all. The status line shows how much the board is moving. You can switch the check off (untick <b>Wait until the board is still</b>, or add <code>nostill</code>), but then hold the board steady yourself.</p>
+      <p>They also note in <code>cameras.txt</code> which camera took the left photos and which board you used, and refuse to add pairs to a folder whose existing pairs were taken with swapped cameras, a different image size or a different board.</p>
+    </div>
+    <h4>Which pairs to take</h4>
+    <p>About 20 pairs, with the board 30–55 cm from the cameras. The same rules as for intrinsic calibration apply, now for both images: cover the whole frame of <b>each</b> camera, including the edges, and tilt the board. The 18 rendered sample pairs follow this list:</p>
+    <ul>
+      <li>3 pairs in the middle, near and far (35, 45 and 55 cm).</li>
+      <li>4 pairs with the board near the four corners of the view, tilted by 15–20°.</li>
+      <li>2 pairs at the far left and far right: the board may be partly out of one camera. That's fine with ChArUco, and these pairs give that camera its edge corners.</li>
+      <li>2 pairs tilted 30° up and down, 2 tilted and turned, 3 rotated in-plane (45° and 90°), 2 close and tilted.</li>
+    </ul>
+    <p>Here is a real session for comparison: 16 pairs from two Arducam webcams looking down at a desk. The board is tilted and turned in many ways, but it always stays where both cameras see it: right of centre in the left camera's images below, left of centre in the right camera's. No corner reaches the left third of the left image or the right third of the right image, and <code>stereo_calibration.py</code> warns about exactly that. Two more pairs, one at the far left and one at the far right, would fix it.</p>
+    <figure class="fig" style="max-width:60rem"><div class="frame"><img src="img/shots_left.jpg" alt="Sixteen thumbnails of the left camera's photos from a real session: the board on a desk at 28 to 40 cm, tilted and turned, mostly right of the centre and never in the left third of the view" width="960" height="720" loading="lazy"></div><figcaption><span>Left images of 16 real pairs</span></figcaption></figure>
+    <h4>What the script does</h4>
+    <details class="fold"><summary><span class="k">Code · 2 parts</span><span class="what">Two photos, as close in time as possible<span class="sep">/</span>Shared corners, and is it still?</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_cap.py · lines 143–145</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="143" data-hl="144,145">    # Grab both frames first and decode them afterwards: this keeps the two photos as close in time as possible
+    grabbed = [cam.grab() for cam in cameras]
+    frames = [cam.retrieve()[1] if ok else None for cam, ok in zip(cameras, grabbed)]</code></pre></div></div>
+      <div class="w-note"><span class="lab">Two photos, as close in time as possible</span><p><code>grab()</code> tells a camera to take a frame; <code>retrieve()</code> decodes it. Grabbing both before decoding either keeps the two photos as close in time as two unsynchronised webcams allow.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d8/dfe/classcv_1_1VideoCapture.html#ae38c2a053d39d6b20c9c649e08ff0146" target="_blank" rel="noopener">based on: <code>VideoCapture.grab</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d8/dfe/classcv_1_1VideoCapture.html#a9ac7f4b1cdfe624663478568486e6712" target="_blank" rel="noopener"><code>VideoCapture.retrieve</code></a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_cap.py · lines 168–179</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="168" data-hl="170,179">    # Find the board in both photos, the corners both cameras see, and how much the board moved
+    detections = [detect_board(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), board, fast=True) for frame in frames]
+    both = common_corners(detections[0], detections[1], board)
+    now = [corners_by_id(d) for d in detections]
+    motions = [corner_motion(n, p) for n, p in zip(now, previous)]
+    previous = now
+    drifts = [corner_motion(n, a) for n, a in zip(now, anchor)]
+    if not all(m is not None and m &lt;= max_motion for m in motions):
+        still_since = None
+    elif still_since is None or not all(d is not None and d &lt;= max_drift for d in drifts):
+        still_since, anchor = time.time(), now  # (re)start the still period here
+    still = not need_still or (still_since is not None and time.time() - still_since &gt;= still_time)</code></pre></div></div>
+      <div class="w-note"><span class="lab">Shared corners, and is it still?</span><p><code>common_corners</code> (from <code>stereo_calibration.py</code>) keeps the corner IDs found in both photos; a pair needs at least 6. The stillness check compares the corners with their positions in the previous frame of the same camera, and with where they were when the board stopped, using the median movement; the still period starts again if either is too large. With <code>nostill</code>, the check is skipped.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/df5/classcv_1_1aruco_1_1CharucoDetector.html#aacbea601612a3a0feaa45ebb7fb255fd" target="_blank" rel="noopener"><code>CharucoDetector.detectBoard</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/df/d4a/tutorial_charuco_detection.html" target="_blank" rel="noopener">tutorial: Detection of ChArUco Boards › ChArUco Board Detection</a></p></div>
+    </div>
+    </details>
+  </div>
+</section>
+
+<!-- ======================================================= 07 -->
+<section class="s" id="s07">
+  <div class="s-head"><span class="n">3.2</span><h3>Run the calibration</h3></div>
+  <div class="s-body">
+    <p>Your own pairs, in <code>stereo_pairs/</code>:</p>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python stereo_calibration.py</code></pre></div>
+    <p>Or the rendered sample pairs:</p>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python stereo_calibration.py sample_pairs</code></pre></div>
+    <p>The first line of the output names the board: the one noted in <code>cameras.txt</code> when you captured, or else the one the script finds in the photos. To choose it yourself, add <code>charuco</code> or <code>chessboard</code>, e.g. <code>python stereo_calibration.py stereo_pairs chessboard</code>. With the chessboard, both photos of a pair number the 28 corners in the same order: OpenCV starts at a black corner square, and because the intrinsic lab's 5 × 8 board has asymmetric corner colours (rotating it by 180° swaps black and white corners), the orientation is unambiguous.</p>
+    <p>Add <code>nogui</code> to skip the window at the end. Here is the run on the sample pairs:</p>
+    <div class="code out"><div class="cap"><span class="file">Output · sample pairs (shortened; OpenCV 4.14)</span></div><pre><code class="language-plaintext">Board: ChArUco (found in the photos; add chessboard to use the other)
+  …
+pair_00.jpg: left 24 corners, right 24, both 24
+pair_01.jpg: left 22 corners, right 24, both 22
+pair_02.jpg: left 24 corners, right 24, both 24
+  …
+Used 18 left and 18 right views, 18 pairs, image size (640, 480)
+Left camera:  RMS 0.065 px
+ K1 =
+[[600.69432984   0.         323.76611879]
+ [  0.         600.04305442 238.18711399]
+ [  0.           0.           1.        ]]
+ D1 = [ 0.07700839 -0.20062599  0.00071672 -0.00029824  0.        ]
+Right camera: RMS 0.065 px
+ K2 =
+[[595.56013503   0.         315.89905767]
+ [  0.         595.0042116  244.32786411]
+ [  0.           0.           1.        ]]
+ D2 = [ 0.05929843 -0.16457097 -0.00042458  0.00067699  0.        ]
+
+Stereo RMS reprojection error: 0.070 px
+R =
+[[ 0.99956535 -0.00408165 -0.02919673]
+ [ 0.00389836  0.99997235 -0.00633208]
+ [ 0.02922176  0.00621551  0.99955363]]
+T = [-80.08691147   0.50431433   1.56277589] mm
+Baseline |T|: 80.1 mm  (check it with a ruler between the centres of the two lenses)
+Angle between the two cameras: 1.73 degrees
+  …
+Per pair, after rectification:      row difference (px)    board distance (mm)
+                                      mean    worst        from disparity / from pose
+  pair_00.jpg                        0.05    0.11         450.4 /   450.5
+  pair_01.jpg                        0.07    0.25         558.0 /   558.4
+  pair_02.jpg                        0.06    0.17         340.9 /   340.9
+  …
+Worst row difference: 0.30 px. Matching searches along rows, so keep it below about 1.5 px.
+Both distance columns use the same board, so they cannot catch a bent board or a wrong square size: the ruler check of the baseline can.
+
+Saved sample_pairs/stereo_calibration.npz
+Rectified pair pair_00.jpg saved as sample_pairs/rectified_example.jpg</code></pre></div>
+    <h4>What the script does</h4>
+    <details class="fold"><summary><span class="k">Code · 5 parts</span><span class="what">Step 1 · Corners both cameras saw<span class="sep">/</span>Step 2 · Each camera on its own<span class="sep">/</span>Step 3 · R and T<span class="sep">/</span>Step 4 · Rectify<span class="sep">/</span>Step 5 · Check it</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_calibration.py · lines 86–105</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="86" data-hl="94,96,105">def common_corners(left, right, board='charuco'):
+    """Board points and pixels of the corners BOTH cameras saw, in the same order, or None if too few.
+
+    left and right are detect_board() results: (object_points, image_points, ids, ...).
+    """
+    if left[0] is None or right[0] is None:
+        return None
+    if board == 'chessboard' and sum(CHESSBOARD_SIZE) % 2 == 0:  # a board that looks the same turned round
+        right = same_order(left, right)
+    ids_left, ids_right = left[2].ravel(), right[2].ravel()
+    common = np.intersect1d(ids_left, ids_right)
+    if len(common) &lt; MIN_COMMON:
+        return None
+    pick_left = [np.flatnonzero(ids_left == i)[0] for i in common]
+    pick_right = [np.flatnonzero(ids_right == i)[0] for i in common]
+    obj = left[0][pick_left]
+    xy = obj.reshape(-1, 3)[:, :2]
+    if np.linalg.matrix_rank(xy - xy.mean(axis=0), tol=1e-6) &lt; 2:  # all on one line: no use
+        return None
+    return obj, left[1][pick_left], right[1][pick_right]</code></pre></div></div>
+      <div class="w-note"><span class="lab">Step 1 · Corners both cameras saw</span><p>Each photo goes through the ChArUco detector of the intrinsic lab, which returns every corner with its ID and its position on the board. For the stereo step, only the IDs found in <em>both</em> photos are kept, in the same order, so that the n-th left pixel and the n-th right pixel are the same board corner.</p><p>The rank test drops pairs whose shared corners are collinear (all lying on one line, which gives no 2D geometric constraint).</p><p>With the chessboard, the detector numbers the 28 corners 0–27, starting at a black corner square. The intrinsic lab's board (5 × 8 squares) swaps its black and white corners when turned by 180°, so both photos number the corners alike. Only a board that looks identical when rotated by 180° (an even total of squares across width and height) can be numbered from opposite ends; for that case <code>same_order</code> keeps the order in which every corner shifts by about the same amount from one photo to the other.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/df5/classcv_1_1aruco_1_1CharucoDetector.html#aacbea601612a3a0feaa45ebb7fb255fd" target="_blank" rel="noopener"><code>CharucoDetector.detectBoard</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d4/db2/classcv_1_1aruco_1_1Board.html#a305c3c47c1f87562ed06de5c7e703e4f" target="_blank" rel="noopener"><code>Board.matchImagePoints</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/df/d4a/tutorial_charuco_detection.html" target="_blank" rel="noopener">tutorial: Detection of ChArUco Boards › ChArUco Board Detection</a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga93efa9b0aa890de240ca32b11253dd4a" target="_blank" rel="noopener"><code>cv2.findChessboardCorners</code></a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_calibration.py · lines 232–235</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="232" data-hl="234,235">    # Step 2: Calibrate each camera on its own (ret = RMS reprojection error in pixels, as in Week 3).
+    flags = cv2.CALIB_FIX_K3 if FIX_K3 else 0
+    rms_left, K1, D1, _, _ = cv2.calibrateCamera(obj_left, img_left, image_size, None, None, flags=flags)
+    rms_right, K2, D2, _, _ = cv2.calibrateCamera(obj_right, img_right, image_size, None, None, flags=flags)</code></pre></div></div>
+      <div class="w-note"><span class="lab">Step 2 · Each camera on its own</span><p>Exactly the intrinsic calibration, once per camera, with every photo in which that camera found the board, including those the other camera missed. <code>CALIB_FIX_K3</code> keeps \(k_3 = 0\), as the intrinsic lab's chessboard script does.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>cv2.calibrateCamera</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">tutorial: Camera Calibration › Calibration</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/python/calibrate.py" target="_blank" rel="noopener">sample: calibrate.py</a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_calibration.py · lines 256–261</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="256" data-hl="259,261">    # Step 3: Stereo calibration. K and distortion stay fixed; it finds R and T, which take a point from
+    # left-camera coordinates to right-camera coordinates: X_right = R @ X_left + T (in mm, like the board).
+    criteria = (cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS, 100, 1e-6)
+    rms, K1, D1, K2, D2, R, T, E, F = cv2.stereoCalibrate(
+        obj_both, img_both_left, img_both_right, K1, D1, K2, D2, image_size,
+        criteria=criteria, flags=cv2.CALIB_FIX_INTRINSIC)</code></pre></div></div>
+      <div class="w-note"><span class="lab">Step 3 · R and T</span><p><code>CALIB_FIX_INTRINSIC</code> keeps K and the distortion from step 2 and solves only for \(R\), \(T\) and each pair's board pose. That leaves fewer unknowns, so the pair needs fewer photos, and the intrinsics can't absorb errors that belong to \(R\) and \(T\). The returned RMS error is over both images of every pair.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga9d2539c1ebcda647487a616bdf0fc716" target="_blank" rel="noopener"><code>cv2.stereoCalibrate</code></a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/cpp/stereo_calib.cpp" target="_blank" rel="noopener">sample: stereo_calib.cpp</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/calibration.cpp" target="_blank" rel="noopener">source: calibration.cpp</a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_calibration.py · lines 263–265</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="263" data-hl="265">    # Step 4: Rectification. R1 and R2 turn each camera so that both look the same way, P1 and P2 are the
+    # new camera matrices, and Q turns (x, y, disparity) into a 3D point. alpha=0 keeps only valid pixels.
+    R1, R2, P1, P2, Q, roi_left, roi_right = cv2.stereoRectify(K1, D1, K2, D2, image_size, R, T, alpha=0)</code></pre></div></div>
+      <div class="w-note"><span class="lab">Step 4 · Rectify</span><p><code>alpha=0</code> zooms the rectified images so that they contain only valid pixels, with no black borders: best for matching. <code>alpha=1</code> would keep every original pixel instead.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6" target="_blank" rel="noopener"><code>cv2.stereoRectify</code></a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/stereo_geom.cpp" target="_blank" rel="noopener">source: stereo_geom.cpp</a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_calibration.py · lines 311–318</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="311" data-hl="314,315">    for name, obj, il, ir in zip(pair_names, obj_both, img_both_left, img_both_right):
+        rl = cv2.undistortPoints(il, K1, D1, R=R1, P=P1).reshape(-1, 2)
+        rr = cv2.undistortPoints(ir, K2, D2, R=R2, P=P2).reshape(-1, 2)
+        dy = np.abs(rl[:, 1] - rr[:, 1])
+        z_disparity = np.mean(f * baseline / (rl[:, 0] - rr[:, 0]))
+        _, rvec, tvec = cv2.solvePnP(obj, il, K1, D1)  # the board's pose seen from the left camera
+        points = (cv2.Rodrigues(rvec)[0] @ obj.reshape(-1, 3).T + tvec).T
+        z_pose = np.mean((R1 @ points.T)[2])  # distance along the rectified viewing direction</code></pre></div></div>
+      <div class="w-note"><span class="lab">Step 5 · Check it</span><p>Each shared corner is mapped into the rectified images with <code>undistortPoints</code>. Its two rows must agree (<code>dy</code>), and its disparity gives a distance by \(Z = fB/d\). The script compares that distance with the board's 3D pose estimated from the left camera alone using Perspective-n-Point (<code>solvePnP</code>), which doesn't use the second camera at all.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga55c716492470bfe86b0ee9bf3a1f0f7e" target="_blank" rel="noopener"><code>cv2.undistortPoints</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga549c2075fac14829ff4a58bc931c033d" target="_blank" rel="noopener"><code>cv2.solvePnP</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga61585db663d9da06b68e70cfbf6a1eac" target="_blank" rel="noopener"><code>cv2.Rodrigues</code></a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/cpp/stereo_calib.cpp" target="_blank" rel="noopener">sample: stereo_calib.cpp</a></p></div>
+    </div>
+    </details>
+    <p>It saves everything in <code>stereo_calibration.npz</code> in the folder of the pairs (<code>stereo_pairs/</code> or <code>sample_pairs/</code>), so a run on the samples never replaces your own calibration. The first pair, rectified with green rows, goes next to it as <code>rectified_example.jpg</code>.</p>
+  </div>
+</section>
+
+</section>
+
+<!-- ####################################################### part-4 -->
+<section class="part-s" id="part-4">
+  <div class="p-head"><span class="n">4</span><h2>Check and measure</h2></div>
+
+<!-- ======================================================= 08 -->
+<section class="s" id="s08">
+  <div class="s-head"><span class="n">4.1</span><h3>Read your result</h3></div>
+  <div class="s-body">
+    <table class="tbl">
+      <thead><tr><th>Number</th><th>Sample pairs</th><th>True value</th><th>What to expect with webcams</th></tr></thead>
+      <tbody>
+        <tr><td>Each camera's RMS error</td><td class="num">0.065 px</td><td class="num">–</td><td>Below about 0.5 px, as for intrinsic calibration</td></tr>
+        <tr><td>Stereo RMS error</td><td class="num">0.070 px</td><td class="num">–</td><td>Below about 0.5–0.7 px. Much larger: a pair taken while the board moved, or a camera moved during capture</td></tr>
+        <tr><td>Baseline \(\lVert T\rVert\)</td><td class="num">80.1 mm</td><td class="num">80.0 mm</td><td>Within 1–2 mm of what a ruler gives between the centres of the two lenses</td></tr>
+        <tr><td>\(T\)</td><td class="num">(−80.1, 0.5, 1.6)</td><td class="num">(−80.0, 0.5, 1.0)</td><td>Mostly x, and negative. Positive x: left and right are swapped (the script warns)</td></tr>
+        <tr><td>Angle between the cameras</td><td class="num">1.73°</td><td class="num">1.77°</td><td>A few degrees. Large angles still work but reduce the overlap</td></tr>
+        <tr><td>Worst row difference</td><td class="num">0.30 px</td><td class="num">–</td><td>Below about 1.5 px. Larger: depth gets noisy or fails</td></tr>
+        <tr><td>Distance from disparity vs from pose</td><td class="num">within 0.5 mm</td><td class="num">–</td><td>Within about 1% at 50 cm</td></tr>
+      </tbody>
+    </table>
+    <p>The sample pairs are rendered, so their errors are smaller than any real pair will give. The true focal lengths are 602 and 596 px; the calibration finds 600.7 and 595.6 px (<code>sample_pairs/true_values.txt</code> lists all true values). For comparison, 16 real pairs from two Arducam webcams gave 0.36 px for each camera, 0.54 px stereo RMS, rows within 1.3 px (under the 1.5 px limit), and the two distance columns within 1%.</p>
+    <p>Below the table, the script prints warnings when something needs your attention:</p>
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Warning</th><th>What it means</th></tr></thead>
+      <tbody>
+        <tr><td><code>no corner reached the … of the left image</code></td><td>No pair put the board in that part of the image, so the lens distortion there can only be extrapolated. Add pairs with the board there; a board seen by only part of the other camera is fine.</td></tr>
+        <tr><td><code>the stereo RMS error is above 1 px</code></td><td>Some pairs are bad, usually because the board moved between the two photos. The table marks suspect pairs with <code>&lt;-</code>, and the script names the worst one.</td></tr>
+        <tr><td><code>&lt;-</code> after a pair</td><td>Its corners are more than 1.5 px apart in row after rectification, or its two distances differ by more than 2%. One bad pair can skew R and T, causing good pairs near the threshold to be flagged too. Delete only the pair the script names as furthest over a limit, from both folders, and run again. Repeat while one pair stands out and the stereo RMS is above about 0.7 px.</td></tr>
+        <tr><td><code>the 'left' camera is on the right</code></td><td>All pairs were taken with left and right swapped. Swap the names of the two folders, delete <code>cameras.txt</code> (it still names the old left camera; the next pair you capture writes it again), and run again.</td></tr>
+        <tr><td><code>in pair_… the cameras look the other way round</code></td><td>Those pairs were taken with the cameras swapped (identical webcams can change index when unplugged and reconnected). Delete them.</td></tr>
+        <tr><td><code>one camera is turned by … degrees</code></td><td>One camera is upside down or on its side. Mount both the same way up.</td></tr>
+        <tr><td><code>the cameras are above each other</code></td><td>A vertical rig; <code>stereo_depth.py</code> needs them side by side.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="call">
+      <span class="lab">The baseline is your best check</span>
+      <p>Measure the distance between the centres of the two lenses with a ruler. If \(\lVert T\rVert\) differs by more than a few millimetres, something is wrong: the board's square size in the settings doesn't match your print (all of \(T\) scales with it), the board is bent, the cameras moved during capture, or several pairs were taken while the board moved. The two distance columns can't catch the first two: both come from the same board. Measuring between lens centres with a ruler is only accurate to a millimetre or two; for a sharper test, <a href="#ruler">measure a ruler in 3D</a> with <code>stereo_depth.py</code>.</p>
+    </div>
+    <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga9d2539c1ebcda647487a616bdf0fc716" target="_blank" rel="noopener"><code>cv2.stereoCalibrate</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga61585db663d9da06b68e70cfbf6a1eac" target="_blank" rel="noopener"><code>cv2.Rodrigues</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">tutorial: Camera Calibration › Re-projection Error</a></p>
+  </div>
+</section>
+
+<!-- ======================================================= 09 -->
+<section class="s" id="s09">
+  <div class="s-head"><span class="n">4.2</span><h3>See depth</h3></div>
+  <div class="s-body">
+    <p>Live, with the same indices as for capture (it uses <code>stereo_pairs/stereo_calibration.npz</code>):</p>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python stereo_depth.py 0 1</code></pre></div>
+    <p>To measure closer than the default 300 mm, add the closest distance in millimetres:</p>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python stereo_depth.py 0 1 min=250</code></pre></div>
+    <p>Or one pair of photos (it uses the calibration in their folder):</p>
+    <div class="code"><div class="cap"><span class="file">Terminal</span><button class="copy">Copy</button></div><pre><code class="language-bash">python stereo_depth.py sample_pairs/left/pair_00.jpg sample_pairs/right/pair_00.jpg</code></pre></div>
+    <p>The window shows the rectified pair with green rows on top and the <b>disparity map</b> below: red is near, blue is far, black has no match. The colours span the searched range, so only points close to <code>min_distance</code> come out red. It is scaled to fit a laptop screen. With photos, it uses the calibration in the folder the photos come from; add the path of another <code>.npz</code> file to override it, and pass <code>nogui</code> to save the results without opening a window.</p>
+    <p>Click on the left image or on the disparity map to measure a point: the two have the same pixels. It shows the <b>depth Z</b>, measured along the viewing direction (what a tape measure gives against a wall parallel to the line between the two lenses), and the <b>straight-line distance</b> from the left camera, which is longer away from the image centre. Click a few pixels inside an object's outline: right on its edge, the depth can belong to what is behind it. Click a second point to also get the <b>distance between the two points</b>, in 3D; a third click starts again, and <kbd>c</kbd> clears both. Each click also prints its numbers in the Terminal. Press <kbd>s</kbd> to save a snapshot, and <kbd>q</kbd> or <kbd>Esc</kbd> to quit.</p>
+    <div class="code out"><div class="cap"><span class="file">Output · sample pair_00 (the board is face-on, 450 mm from the left camera)</span></div><pre><code class="language-plaintext">Calibration sample_pairs/stereo_calibration.npz: baseline 80.1 mm, f 636.8 px. Searching disparities 0-176 px: distances from about 290 mm (add min=... to change; closer points get wrong, far distances). The left 176 px of the map cannot be matched.
+At the image centre: Z = 449 mm, straight-line distance 449 mm
+Matched 64 % of the pixels; their median Z is 1383 mm (from 447 to 1417 mm for 90 % of them)
+Saved depth_rectified.jpg and depth_disparity.jpg</code></pre></div>
+    <p>Two disparity maps from the real capture, with the board on a desk 31–43 cm away. The cameras are 142 mm apart, so measuring down to the default 300 mm takes a search over 272 px, and the black band on the left is that wide.</p>
+    <div class="pair">
+      <figure><div class="frame"><img src="img/disparity_04_real.jpg" alt="Disparity map of a real pair: the left 272 px are black (never searched); the board on the desk is yellow on its far left side and orange to red on its nearer right side; its plain black squares have holes and blue patches of wrong matches, and a white cross marked 1 at the image centre" width="640" height="480" loading="lazy"></div><figcaption><span>Real pair 04: the board's corners 35–43 cm away, nearer on the right; the blue patches on its left half are wrong matches</span></figcaption></figure>
+      <figure><div class="frame"><img src="img/disparity_06_real.jpg" alt="Disparity map of a second real pair: the board is closer, red at its near top-right corner and orange towards its far left side; blue speckles around it are wrong matches on the plain desk" width="640" height="480" loading="lazy"></div><figcaption><span>Real pair 06: the same tilt but closer (about 36 cm), so the colours span more; blue speckles on the plain desk are wrong matches</span></figcaption></figure>
+    </div>
+    <details class="fold"><summary><span class="k">Code · 2 parts</span><span class="what">The matcher<span class="sep">/</span>From disparity to millimetres</span></summary>
+    <div class="walk">
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_depth.py · lines 64–69</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="64" data-hl="66"># Disparity d = x_left - x_right of the same point; its distance is Z = f * baseline / d. The closest point
+# we want to measure has the largest disparity, so the matcher searches up to that (a multiple of 16).
+num_disparities = int(np.clip(16 * np.ceil(f * baseline / min_distance / 16), 16, 1024))
+matcher = cv2.StereoSGBM_create(minDisparity=0, numDisparities=num_disparities, blockSize=block_size,
+                                P1=8 * block_size ** 2, P2=32 * block_size ** 2, uniquenessRatio=10,
+                                speckleWindowSize=100, speckleRange=2, mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY)</code></pre></div></div>
+      <div class="w-note"><span class="lab">The matcher</span><p><code>StereoSGBM</code> (Semi-Global Block Matching) compares small blocks (<code>block_size</code> × <code>block_size</code> pixels) of the left image with blocks on the same row of the right image, shifted by 0 to <code>numDisparities</code> pixels, and keeps the best match smoothly across the image.</p><p>The script sets <code>numDisparities</code> from your calibration so that points down to <code>min_distance</code> (300 mm, or <code>min=…</code>) can be found. The left edge of the map stays black over that width: there, the matching pixel would be outside the right image.</p><p>A point <b>closer</b> than <code>min_distance</code> doesn't come out black: because its true disparity exceeds <code>numDisparities</code>, the matcher picks a wrong, smaller shift and reports it as much further away.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d2/d85/classcv_1_1StereoSGBM.html#a177fd40dc0dae3a96059dbb3ad92a019" target="_blank" rel="noopener">based on: <code>cv2.StereoSGBM_create</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/dd/d53/tutorial_py_depthmap.html" target="_blank" rel="noopener">tutorial: Depth Map from Stereo Images › Code</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/stereosgbm.cpp" target="_blank" rel="noopener">source: stereosgbm.cpp</a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/python/stereo_match.py" target="_blank" rel="noopener">sample: stereo_match.py</a></p></div>
+      <div class="w-code"><div class="code"><div class="cap"><span class="file">stereo_depth.py · lines 93–112</span><button class="copy">Copy</button></div><pre><code class="language-python" data-start="93" data-hl="102,111">def disparity_near(disparity, x, y, r=3):
+    """Disparity at pixel (x, y), steadied by its neighbours in the (2r+1) x (2r+1) square around it: the median of
+    those on the same surface (within 2 px of its own disparity). If (x, y) itself has no match: the median of the
+    square's matched pixels, or None if fewer than half of them matched."""
+    x, y = int(round(x)), int(round(y))
+    square = disparity[max(y - r, 0):y + r + 1, max(x - r, 0):x + r + 1]
+    matched = square[square &gt; 0]
+    own = disparity[y, x]
+    if own &gt; 0:  # near an object's edge, part of the square sees what is behind it: leave that out
+        return float(np.median(matched[np.abs(matched - own) &lt;= 2]))
+    return float(np.median(matched)) if 2 * matched.size &gt;= square.size else None
+
+
+def point_at(disparity, x, y):
+    """3D point (mm, rectified left camera) at pixel (x, y), or None without a match."""
+    d = disparity_near(disparity, x, y)
+    if d is None:
+        return None
+    X, Y, Z, W = Q @ np.array([x, y, d, 1.0])  # Z / W is the same as f * baseline / d
+    return np.array([X, Y, Z]) / W</code></pre></div></div>
+      <div class="w-note"><span class="lab">From disparity to millimetres</span><p>One pixel's disparity can be slightly off, or missing, so <code>disparity_near</code> takes the median over a 7 × 7 square around the click. It only uses the pixels within 2 px of the clicked pixel's own disparity: near an object's edge, part of the square sees what is behind it. If the clicked pixel has no match, it uses all the matched pixels in the square, and gives up if fewer than half of them matched.</p><p><code>Q</code> from <code>stereoRectify</code> turns a pixel and its disparity into a 3D point in homogeneous coordinates; dividing by <code>W</code> gives millimetres. For a rectified side-by-side pair its Z is exactly \(Z = fB/d\); the straight-line distance is the length of the whole vector. <code>cv2.reprojectImageTo3D(disparity, Q)</code> does the same for every pixel at once: a point cloud.</p><p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga1bc1152bd57d63bc524204f21fde6e02" target="_blank" rel="noopener">based on: <code>cv2.reprojectImageTo3D</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6" target="_blank" rel="noopener"><code>cv2.stereoRectify</code></a><span class="sep">·</span><a href="https://github.com/opencv/opencv/blob/4.x/samples/python/stereo_match.py" target="_blank" rel="noopener">sample: stereo_match.py</a></p></div>
+    </div>
+    </details>
+    <figure class="fig" style="max-width:48rem"><div class="frame"><img src="img/measure_04_real.jpg" alt="The depth window for real pair 04 after two clicks on board corners five squares apart, marked 1 and 2 and joined by a line on the left image and on the disparity map; the text on the right gives each point's distance and 1 to 2: 151 mm apart" width="960" height="720" loading="lazy"></div><figcaption><span>Corners five squares (150 mm) apart in a real pair: the window says 151 mm. The board is tilted, so the two corners are at different depths (434 and 367 mm)</span></figcaption></figure>
+    <div class="call" id="ruler">
+      <span class="lab">Check the scale with a ruler</span>
+      <p>Lay a ruler flat in view, about as far away as the things you want to measure. Put two marks on it 200 mm apart that you can click precisely, such as a cross drawn on each of two sticky notes: at 640 × 480 the ruler's own numbers are only a few pixels tall. Keep both marks out of the black band on the left of the map, and click their centres on the left image. Averaged over a few tries, the window should say 198–202 mm (within 1%); 196 or 204 on average means the scale is 2% off.</p>
+      <p>Anything that repeats evenly along a row, such as the ruler's ticks or a row of the board's squares, looks alike at several shifts, and the matcher can pick one a whole period off. That point then gets a much larger Z: in sample pair_10, part of the board reads about 2&nbsp;m, beyond the wall. So check that both Z values make sense before you trust the distance.</p>
+      <p>Every coordinate of a 3D point is proportional to the baseline: \(Z = fB/d\), and across the image \(X = (x - c_x)\,Z/f = (x - c_x)\,B/d\). So a baseline 2% too short makes every length 2% too short: 196 mm instead of 200. The ruler doesn't depend on the board, so it catches what the calibration's own checks can't: a wrong square size in the settings, or a bent board. One pixel is about \(Z/f\) millimetres (0.6 mm at 400 mm with \(f\) = 640 px), so click carefully and measure a few times.</p>
+      <p class="ocv"><span class="ocv-lab">OpenCV</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga1bc1152bd57d63bc524204f21fde6e02" target="_blank" rel="noopener"><code>cv2.reprojectImageTo3D</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6" target="_blank" rel="noopener"><code>cv2.stereoRectify</code></a><span class="sep">·</span><a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#details" target="_blank" rel="noopener">calib3d reference › pinhole camera model</a></p>
+    </div>
+    <div class="call">
+      <span class="lab">Plain surfaces have no depth</span>
+      <p>Matching needs texture. The board's plain black squares, its white margin and a plain wall look the same at every shift, so they stay black or noisy: in the maps above, the insides of the black squares are holes or wrong blue patches, while the white squares, which hold the markers, match well. Point the cameras at a textured scene (books, a cluttered desk) to see a full map.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================= 10 -->
+<section class="s" id="s10">
+  <div class="s-head"><span class="n">4.3</span><h3>Troubleshooting</h3></div>
+  <div class="s-body">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Message or symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td><code>Error: unable to read camera N</code></td><td>Wrong index, camera used by another app, no permission, or both webcams on one USB hub</td><td>Run <code>python stereo_cap.py list</code>; close Zoom/Teams; use two USB ports. On macOS, allow access for your terminal or VS Code under System Settings → Privacy &amp; Security → Camera</td></tr>
+        <tr><td><code>the cameras give different image sizes</code></td><td>Two different webcam models, or one ignores the requested 640 × 480</td><td>Use two webcams of the same model, or set <code>frame_size</code> at the top of <code>stereo_cap.py</code> to a size both support</td></tr>
+        <tr><td><code>The board is moving</code> every time</td><td>The board isn't held still for half a second, or the image is noisy in poor light</td><td>Rest the board on something; add light; press <kbd>c</kbd> again</td></tr>
+        <tr><td><code>The pairs in stereo_pairs/ were taken with … as the LEFT camera</code></td><td>The cameras are swapped compared with the earlier pairs (identical webcams can swap indices when unplugged and reconnected)</td><td>Swap the order of the indices, or empty the folder to start again</td></tr>
+        <tr><td><code>The pairs in stereo_pairs/ are W x H, but the cameras now give …</code></td><td>You changed the image size</td><td>Capture at the old size, or empty the folder</td></tr>
+        <tr><td><code>Both cameras must see the board</code> (or <code>… the whole chessboard</code>)</td><td>The board is outside one camera's view, too far away, or too blurry</td><td>ChArUco: move it towards the middle and closer (within about 50 cm). Chessboard: the whole board must be in both photos, so move it towards the middle or a little further away</td></tr>
+        <tr><td><code>WARNING: the 'left' camera is on the right</code>, or <code>stereo_depth.py</code> stops with the same message</td><td>Left and right are swapped</td><td>Swap the names of <code>stereo_pairs/left</code> and <code>stereo_pairs/right</code>, delete <code>stereo_pairs/cameras.txt</code>, and calibrate again; swap the order of the indices from now on</td></tr>
+        <tr><td><code>The images look swapped</code> (stereo_depth.py)</td><td>The two cameras or photo paths were passed in the wrong order</td><td>Swap the two indices or file names</td></tr>
+        <tr><td><code>WARNING: the cameras are above each other</code></td><td>The rig is vertical</td><td>Mount the cameras side by side for <code>stereo_depth.py</code></td></tr>
+        <tr><td>Baseline far from the ruler</td><td>Board square size doesn't match the print; cameras moved; pairs taken while moving</td><td>Measure the printed squares and set them: <code>SQUARE_LENGTH</code> and <code>MARKER_LENGTH</code> at the top of <code>../intrinsic/w3_calibration_charuco.py</code> (ChArUco) or <code>CHESSBOARD_SQUARE</code> at the top of <code>stereo_calibration.py</code> (chessboard); fix the cameras; capture again</td></tr>
+        <tr><td>Stereo RMS above 1 px, or pairs marked <code>&lt;-</code></td><td>A few bad pairs (moved board, blur), or a camera moved during capture</td><td>Delete the pair the script names as furthest over a limit from both folders (same name) and run again; repeat if needed. If that doesn't help, capture again with the rig clamped down</td></tr>
+        <tr><td>Depth map mostly black, or <code>Almost nothing matches</code></td><td>Little texture, the cameras moved since calibration, or swapped indices</td><td>Look at a textured scene; recalibrate after any knock; check the indices</td></tr>
+        <tr><td>A near object reads much too far</td><td>It is closer than <code>min_distance</code></td><td>Add <code>min=…</code> with a smaller distance</td></tr>
+        <tr><td><code>No calibration at …/stereo_calibration.npz</code></td><td>The calibration hasn't run on that folder</td><td>Run <code>stereo_calibration.py</code> on it first, or pass the path to your <code>.npz</code> file</td></tr>
+        <tr><td><code>Option B needs OpenCV 4.7 or newer</code></td><td>An older version of OpenCV</td><td><code>pip install -U opencv-contrib-python</code> inside your environment</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================= 11 -->
+<section class="s" id="s11">
+  <div class="s-head"><span class="n">4.4</span><h3>Check yourself</h3></div>
+  <div class="s-body">
+    <details class="q"><summary><span class="n">Q1</span>The calibration gives \(T = (-62.0,\ 0.4,\ -0.8)\) mm. How far apart are the cameras, and which way round are they?</summary><div class="a"><p>About 62 mm (\(\lVert T\rVert \approx 62.0\)). \(T_x\) is negative, so the right camera really is to the right of the left one: they are the right way round.</p></div></details>
+    <details class="q"><summary><span class="n">Q2</span>Why does the script calibrate each camera first and then call <code>stereoCalibrate</code> with <code>CALIB_FIX_INTRINSIC</code>?</summary><div class="a"><p>Each camera's intrinsics are best found from all of its own photos, including those the other camera missed. Fixing them leaves only \(R\), \(T\) and the board poses to find, which is better conditioned (more numerically stable) and stops the intrinsics from absorbing errors in \(R\) and \(T\).</p></div></details>
+    <details class="q"><summary><span class="n">Q3</span>\(f = 640\) px, \(B = 80\) mm, and a point has a disparity of 40 px. How far away is it, and how uncertain is that if \(d\) is off by 0.5 px?</summary><div class="a"><p>\(Z = 640 \cdot 80 / 40 = 1280\) mm. \(\Delta Z \approx Z^2 \Delta d / (fB) = 1280^2 \cdot 0.5 / 51200 \approx 16\) mm.</p></div></details>
+    <details class="q"><summary><span class="n">Q4</span>You double the baseline. What happens to the depth error at 1 m, and to the closest distance you can measure with the same <code>numDisparities</code>?</summary><div class="a"><p>The error halves (\(\Delta Z \propto 1/B\)). Every disparity doubles, so the closest measurable distance doubles too (or you need twice the <code>numDisparities</code>), and close objects may no longer be in both views.</p></div></details>
+    <details class="q"><summary><span class="n">Q5</span>After rectification, matching corners differ by 3 px in row. Name two likely causes.</summary><div class="a"><p>A camera moved after (or during) the capture; pairs taken while the board moved; poor intrinsics, e.g. no photos near the image edges; the left and right files of a pair don't belong together.</p></div></details>
+    <details class="q"><summary><span class="n">Q6</span>Someone bumps the right camera. Do you need to redo the intrinsic calibration, the stereo calibration, or both?</summary><div class="a"><p>The stereo part (\(R\), \(T\)) certainly: it describes how the cameras are mounted. The intrinsics belong to each camera and stay valid unless the focus or zoom changed. Since the script does both from the same pairs, you simply capture new pairs and run it again.</p></div></details>
+  </div>
+</section>
+
+</section>
+
+<!-- ####################################################### part-5 -->
+<section class="part-s" id="part-5">
+  <div class="p-head"><span class="n">5</span><h2>Going further</h2></div>
+
+<!-- ======================================================= 12 -->
+<section class="s" id="s12">
+  <div class="s-head"><span class="n">5.1</span><h3>Ideas to try</h3></div>
+  <div class="s-body">
+    <ul>
+      <li><b>A point cloud.</b> <code>points = cv2.reprojectImageTo3D(disparity, Q)</code> gives an (x, y, z) for every pixel. Keep the pixels with a valid disparity and save them, with their colours, as a <code>.ply</code> file to open in MeshLab or Open3D.</li>
+      <li><b>Cleaner disparity.</b> The contrib module's <code>cv2.ximgproc.createDisparityWLSFilter</code> fills holes and sharpens edges using the left image. <code>cv2.StereoBM_create</code> is faster but noisier.</li>
+      <li><b>Synchronised cameras.</b> A stereo camera module (both sensors on one board, one USB connection) takes both photos at the exact same time, so moving scenes work too. Depth cameras such as Intel RealSense or Orbbec do the whole pipeline in hardware.</li>
+      <li><b>More than two cameras.</b> OpenCV 5 adds <code>cv2.calibrateMultiview</code>. The ROS 2 <a href="https://github.com/ros-perception/image_pipeline/tree/rolling/camera_calibration" target="_blank" rel="noopener">camera_calibration</a> package calibrates stereo pairs with a GUI.</li>
+      <li><b>Further reading.</b> R. Hartley and A. Zisserman, <i>Multiple View Geometry in Computer Vision</i>, chapters 9–11 (epipolar geometry and the fundamental matrix); the OpenCV calib3d reference for <code>stereoCalibrate</code>, <code>stereoRectify</code> and <code>StereoSGBM</code>.</li>
+      <li><b>Kalibr.</b> <a href="https://github.com/ethz-asl/kalibr" target="_blank" rel="noopener">Kalibr</a> (ETH Zurich) is the long-standing research tool for calibrating several cameras together (they need not all see a common area, but each camera's view must overlap a neighbour's) and cameras with an IMU (inertial measurement unit), including the time offset between them. It usually works with an AprilGrid board, runs on ROS 1 (most easily in its Docker image), and has not been updated since early 2024.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ======================================================= credits -->
+<section class="s" id="credits">
+  <div class="s-head"><span class="n">5.2</span><h3>Sources and credits</h3></div>
+  <div class="s-body">
+<p>This lab draws on the sources below. Most sections also link to the OpenCV pages they draw on.</p>
+<ul>
+  <li><b>Intrinsic calibration tutorial and slides.</b> The lab continues the intrinsic calibration tutorial, which follows the slides “Camera Intrinsic Calibration” by Luchen Li, and reuses its ChArUco board and detector in step 1 of section <a class="sref" href="#s07">3.2</a>.</li>
+  <li><b>Photos and sample pairs.</b> The photos on this page were taken by the course leader with two Arducam OV9782 webcams. The pairs in <code>sample_pairs/</code> are rendered by the course's own software from two virtual webcams, the lab's ChArUco board and a randomly generated wall texture.</li>
+  <li><b>OpenCV sample <a href="https://github.com/opencv/opencv/blob/4.x/samples/cpp/stereo_calib.cpp" target="_blank" rel="noopener">stereo_calib.cpp</a>.</b> Apart from calibrating each camera first, <code>stereo_calibration.py</code> follows its order: <code>stereoCalibrate</code>, <code>stereoRectify</code>, then <code>initUndistortRectifyMap</code> and <code>remap</code> to show the rectified pair side by side with green horizontal lines across it (<code>rectified_example.jpg</code>). The sample comes from the book <i>Learning OpenCV: Computer Vision with the OpenCV Library</i> by G. Bradski and A. Kaehler (O'Reilly, 2008).</li>
+  <li><b>OpenCV sample <a href="https://github.com/opencv/opencv/blob/4.x/samples/python/stereo_match.py" target="_blank" rel="noopener">stereo_match.py</a>.</b> The matcher in <code>stereo_depth.py</code> (section <a class="sref" href="#s09">4.2</a>) uses its <code>uniquenessRatio</code> (10) and <code>speckleWindowSize</code> (100) and divides the output by 16 as it does. The point-cloud suggestion in section <a class="sref" href="#s12">5.1</a> (<code>reprojectImageTo3D</code>, the valid pixels with their colours, a <code>.ply</code> file for MeshLab) follows the sample.</li>
+  <li><b>OpenCV tutorials <a href="https://docs.opencv.org/4.x/dd/d53/tutorial_py_depthmap.html" target="_blank" rel="noopener">Depth Map from Stereo Images</a> and <a href="https://docs.opencv.org/4.x/da/de9/tutorial_py_epipolar_geometry.html" target="_blank" rel="noopener">Epipolar Geometry</a>.</b> Sections <a class="sref" href="#s02">1.2</a> and <a class="sref" href="#s03">1.3</a> explain disparity (\(Z = fB/d\) from similar triangles) and the epipolar line (so the search for a match is 1D) as their Basics and Basic Concepts sections do.</li>
+  <li><b>OpenCV tutorials <a href="https://docs.opencv.org/4.x/df/d4a/tutorial_charuco_detection.html" target="_blank" rel="noopener">Detection of ChArUco Boards</a>, <a href="https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html" target="_blank" rel="noopener">Camera Calibration</a> and <a href="https://docs.opencv.org/4.x/da/d0d/tutorial_camera_calibration_pattern.html" target="_blank" rel="noopener">Create Calibration Pattern</a></b> (the last by Laurent Berger, Alexander Panov and Alexander Smorkalov) <b>and sample <a href="https://github.com/opencv/opencv/blob/4.x/samples/python/calibrate.py" target="_blank" rel="noopener">calibrate.py</a>.</b> Step 1 of section <a class="sref" href="#s07">3.2</a> uses the intrinsic lab's ChArUco detector, which makes the calls of the ChArUco tutorial and of <code>calibrate.py</code> in the same order, and step 2 makes the Camera Calibration tutorial's <code>calibrateCamera</code> call once per camera. The board advice in section <a class="sref" href="#s04">2.1</a> draws on Create Calibration Pattern.</li>
+  <li><b>OpenCV reference pages.</b> The <a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga9d2539c1ebcda647487a616bdf0fc716" target="_blank" rel="noopener"><code>stereoCalibrate</code></a> and <a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6" target="_blank" rel="noopener"><code>stereoRectify</code></a> pages give the conventions and formulas of sections <a class="sref" href="#s01">1.1</a> and <a class="sref" href="#s03">1.3</a>, and the <code>stereoCalibrate</code> page recommends the method of steps 2–3 of section <a class="sref" href="#s07">3.2</a>: calibrate each camera first, then pass <code>CALIB_FIX_INTRINSIC</code>. The matcher's <code>P1</code> and <code>P2</code> (section <a class="sref" href="#s09">4.2</a>) are the values the <a href="https://docs.opencv.org/4.x/d2/d85/classcv_1_1StereoSGBM.html#a177fd40dc0dae3a96059dbb3ad92a019" target="_blank" rel="noopener"><code>StereoSGBM</code></a> page suggests (8 and 32 × channels × <code>blockSize</code>²). The <a href="https://docs.opencv.org/4.x/d8/dfe/classcv_1_1VideoCapture.html#ae38c2a053d39d6b20c9c649e08ff0146" target="_blank" rel="noopener"><code>VideoCapture.grab</code></a> page describes the grab-then-retrieve approach of section <a class="sref" href="#s06">3.1</a>.</li>
+  <li><b>References in the OpenCV documentation.</b> The <a href="https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d" target="_blank" rel="noopener"><code>calibrateCamera</code> documentation</a> cites Z. Zhang, “A flexible new technique for camera calibration”, <i>IEEE TPAMI</i> 22(11):1330–1334, 2000, and J.-Y. Bouguet, <i>Camera Calibration Toolbox for MATLAB</i>, 2004. The <a href="https://docs.opencv.org/4.x/d2/d85/classcv_1_1StereoSGBM.html#a177fd40dc0dae3a96059dbb3ad92a019" target="_blank" rel="noopener"><code>StereoSGBM</code> documentation</a> says it implements a modified version of the algorithm of H. Hirschmüller, “Stereo processing by semiglobal matching and mutual information”, <i>IEEE TPAMI</i> 30(2):328–341, 2008, using the sub-pixel metric of S. Birchfield and C. Tomasi, “A pixel dissimilarity measure that is insensitive to image sampling”, <i>IEEE TPAMI</i> 20(4):401–406, 1998, in place of mutual information.</li>
+  <li><b>Licence.</b> OpenCV is open source, released under the <a href="https://github.com/opencv/opencv/blob/4.x/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a>.</li>
+</ul>
+  </div>
+</section>
+
+</section>
+
+</main>
+
+<footer class="foot">
+  <span>COMP0241 · Stereo calibration lab · Builds on the intrinsic calibration tutorial (slides “Camera Intrinsic Calibration” by Luchen Li)</span>
+  <span>Example outputs: <code>calibration_tutorial/stereo/sample_pairs</code> (rendered pairs), OpenCV 4.14. Photos: a real capture with two Arducam OV9782 webcams</span>
+</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="stereo.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+These 18 photos are RENDERED, not photographed: a virtual 1280x800 webcam with a fisheye lens
+(about 137 degrees across, 87 degrees down and 161 degrees on the diagonal) looks at the ChArUco
+board of the Week 3 tutorial (7x5 squares of 30 mm). Most webcams are not fisheye; these photos
+let you try the fisheye model anyway. Because they are rendered, the true values are known:
+
+Model: OpenCV fisheye (Kannala-Brandt), r = f * theta * (1 + k1 theta^2 + k2 theta^4 + k3 theta^6 + k4 theta^8)
+fx 520.0  fy 519.0  cx 644.0  cy 396.0
+k1 0.03  k2 -0.012  k3 0.004  k4 -0.0008
+
+Try both models, from the calibration_tutorial/intrinsic folder:
+    python w3_calibration_charuco.py sample_fisheye_images fisheye
+    python w3_calibration_charuco.py sample_fisheye_images
+The first finds the values above to within a fraction of a pixel (RMS error about 0.03 px).
+The standard model can only roughly follow a lens this wide: its RMS error is about 0.9 px,
+some 25 times larger, and it puts fx near 539 instead of 520.
+Runs on this folder save calibration_data_fisheye_sample_fisheye_images.npz and
+calibration_data_charuco_sample_fisheye_images.npz, so they never replace your own calibration.

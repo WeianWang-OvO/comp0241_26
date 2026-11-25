@@ -1,0 +1,12 @@
+These 18 pairs are RENDERED, not photographed: two virtual 640x480 webcams look at the
+ChArUco board of the Week 3 tutorial (7x5 squares of 30 mm) in front of a textured wall.
+Because they are rendered, the true values are known, so you can check what stereo_calibration.py finds:
+
+Left camera:  fx 602.0  fy 601.0  cx 324.0  cy 238.0   distortion [0.08, -0.21, 0.0008, -0.0006, 0.0]
+Right camera: fx 596.0  fy 595.5  cx 316.5  cy 244.0   distortion [0.06, -0.17, -0.0005, 0.001, 0.0]
+T = [-80.0, 0.5, 1.0] mm   (baseline 80.01 mm)
+Angle between the cameras: 1.77 degrees
+The wall is 1400 mm in front of the left camera; in pair_00 the board is face-on, 450 mm away (its centre).
+
+The images were blurred slightly, shaded and given noise like a webcam, but a real pair of webcams
+will give larger errors: a slightly bent board, motion between the two photos, autofocus, rolling shutter.

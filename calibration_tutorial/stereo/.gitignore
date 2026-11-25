@@ -1,0 +1,7 @@
+# Your own captures and results (the scripts write them next to themselves or next to the pairs)
+stereo_pairs/
+camera_list/
+stereo_calibration.npz
+rectified_example.jpg
+depth_*.jpg
+__pycache__/

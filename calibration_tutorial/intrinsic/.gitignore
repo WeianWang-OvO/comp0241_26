@@ -1,0 +1,8 @@
+# Each student's own photos and results: made by running the scripts, not part of the repository
+calibration_images/
+calibration_images_*/
+charuco_detections/
+*.npz
+undistorted_example.jpg
+coverage.png
+__pycache__/
