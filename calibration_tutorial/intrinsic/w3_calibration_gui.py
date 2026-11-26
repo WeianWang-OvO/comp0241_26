@@ -82,7 +82,10 @@ def find_board(gray, board, saved=False):
         if obj is None:
             return None
         return {'ids': ids.ravel().tolist(), 'image': img.reshape(-1, 2), 'object': obj.reshape(-1, 3)}
-    found, corners = cv2.findChessboardCorners(gray, CHESSBOARD_SIZE, None if saved else FAST)
+    if saved:  # OpenCV's default flags, as w3_calibration.py
+        found, corners = cv2.findChessboardCorners(gray, CHESSBOARD_SIZE)
+    else:  # flags= by name: the third positional argument is the output array for the corners, not the flags
+        found, corners = cv2.findChessboardCorners(gray, CHESSBOARD_SIZE, flags=FAST)
     if not found:
         return None
     if saved:
@@ -616,6 +619,12 @@ class App(tk.Tk):
         elif item['number'] == self.saved_number:
             self.say("Already saved: this camera frame is in the folder already.", ORANGE)
             return False
+        gray = cv2.cvtColor(item['frame'], cv2.COLOR_BGR2GRAY)
+        found = find_board(gray, item['board'], saved=True)  # the search w3_calibration.py will make in the photo
+        if found is None:
+            self.say("Not saved: the live view found the board, but the full search used by w3_calibration.py did "
+                     "not, so it would skip this photo. Hold the board still in good light and save again.", ORANGE)
+            return False
         name = self.next_name()
         path = os.path.join(self.active_folder, name)
         try:
@@ -629,8 +638,6 @@ class App(tk.Tk):
             self.say(f"Could not save {name} in {self.active_folder}: check that it is a folder you can write to"
                      f"{'; Auto save is now off' if auto else ''}.{path_hint(path)}", RED)
             return False
-        gray = cv2.cvtColor(item['frame'], cv2.COLOR_BGR2GRAY)
-        found = find_board(gray, item['board'], saved=True) or item['found']  # as w3_calibration.py will find it
         self.views.append(dict(found, name=name, size=gray.shape[::-1]))
         self.session.append(path)
         self.last_saved, self.saved_still = item['found'], self.still_since
